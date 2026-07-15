@@ -23,3 +23,8 @@ desktop.ini
 # Env / secrets
 .env
 .env.*
+
+# Logs
+*.log
+dist-ssr/
+
