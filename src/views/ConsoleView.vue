@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
-import RFB from "@novnc/novnc/core/rfb";
+import RFB from "@novnc/novnc";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { api, type GuestKind } from "../api";

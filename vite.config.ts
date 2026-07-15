@@ -8,6 +8,12 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig(async () => ({
   plugins: [vue()],
 
+  build: {
+    // noVNC uses top-level await; Tauri webviews (WebView2 / recent WebKit)
+    // support it fine — the vite default target is just conservative.
+    target: "es2022",
+  },
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent Vite from obscuring rust errors

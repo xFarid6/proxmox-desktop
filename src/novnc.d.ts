@@ -1,5 +1,6 @@
 // @novnc/novnc ships no TypeScript types; declare the bit we use.
-declare module "@novnc/novnc/core/rfb" {
+// The package's only export is the root, which is core/rfb.js.
+declare module "@novnc/novnc" {
   export default class RFB extends EventTarget {
     constructor(
       target: HTMLElement,
