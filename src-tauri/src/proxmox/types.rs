@@ -26,6 +26,8 @@ pub struct ClusterResource {
     pub maxdisk: Option<u64>,
     pub uptime: Option<u64>,
     pub storage: Option<String>,
+    pub netin: Option<u64>,
+    pub netout: Option<u64>,
 }
 
 /// One entry from `GET /nodes`.
