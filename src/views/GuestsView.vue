@@ -66,6 +66,9 @@ onMounted(refreshCluster);
       <button @click="refreshCluster">
         Refresh
       </button>
+      <router-link to="/guests/new">
+        Create
+      </router-link>
     </div>
 
     <p v-if="!activeId">
