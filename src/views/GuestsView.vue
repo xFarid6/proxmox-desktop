@@ -106,7 +106,11 @@ onMounted(refreshCluster);
           :key="g.id"
         >
           <td>{{ g.vmid }}</td>
-          <td>{{ g.name ?? "—" }}</td>
+          <td>
+            <router-link :to="`/guests/${g.node}/${g.type}/${g.vmid}`">
+              {{ g.name ?? g.vmid }}
+            </router-link>
+          </td>
           <td>{{ g.type === "qemu" ? "VM" : "CT" }}{{ g.template ? " (template)" : "" }}</td>
           <td>{{ g.node }}</td>
           <td>
