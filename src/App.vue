@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import ToastList from "./components/ToastList.vue";
+
 const nav = [
   { to: "/connections", label: "Connections" },
   { to: "/dashboard", label: "Dashboard" },
@@ -26,6 +28,7 @@ const nav = [
     <main class="content">
       <RouterView />
     </main>
+    <ToastList />
   </div>
 </template>
 

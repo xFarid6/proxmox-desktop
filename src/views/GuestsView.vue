@@ -4,9 +4,9 @@ import { api, type ClusterResource, type PowerAction } from "../api";
 import { formatBytes, percent } from "../format";
 import { activeId } from "../stores/connections";
 import { error, guests, loading, refreshCluster } from "../stores/cluster";
+import { toast } from "../stores/toast";
 
 const nodeFilter = ref("");
-const actionError = ref("");
 const pending = ref(new Set<number>());
 
 const nodeNames = computed(() =>
@@ -26,14 +26,14 @@ function actionsFor(g: ClusterResource): PowerAction[] {
 
 async function power(g: ClusterResource, action: PowerAction) {
   if (!activeId.value || !g.node || g.vmid == null) return;
-  actionError.value = "";
   pending.value = new Set(pending.value).add(g.vmid);
   try {
     await api.guestPower(activeId.value, g.node, g.type as "qemu" | "lxc", g.vmid, action);
+    toast(`${action} sent to ${g.vmid}`);
     // Status flips async on the server; refresh shortly after.
     setTimeout(refreshCluster, 1500);
   } catch (e) {
-    actionError.value = String(e);
+    toast(String(e), "error");
   } finally {
     const next = new Set(pending.value);
     next.delete(g.vmid);
@@ -83,13 +83,6 @@ onMounted(refreshCluster);
     >
       {{ error }}
     </p>
-    <p
-      v-if="actionError"
-      class="error"
-    >
-      {{ actionError }}
-    </p>
-
     <table v-if="activeId && !loading && filtered.length > 0">
       <thead>
         <tr>

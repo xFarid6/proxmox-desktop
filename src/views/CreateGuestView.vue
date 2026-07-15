@@ -4,6 +4,7 @@ import { useRouter } from "vue-router";
 import { api, type GuestKind, type StorageContent, type StorageSummary } from "../api";
 import { activeId } from "../stores/connections";
 import { guests, nodes, refreshCluster } from "../stores/cluster";
+import { toast } from "../stores/toast";
 
 const router = useRouter();
 
@@ -81,6 +82,7 @@ async function submit() {
       if (password.value) params.password = password.value;
     }
     await api.createGuest(activeId.value, node.value, kind.value, params);
+    toast(`Creation task started for ${vmid.value}`);
     await refreshCluster();
     router.push("/guests");
   } catch (e) {
