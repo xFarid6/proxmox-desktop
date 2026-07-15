@@ -85,7 +85,20 @@ export interface NetworkInterface {
   autostart?: number;
 }
 
+export interface ConsoleInfo {
+  port: number;
+  ticket: string;
+  user?: string;
+}
+
 export const api = {
+  openConsole: (
+    connectionId: string,
+    node: string,
+    kind: GuestKind,
+    vmid: number,
+    mode: "vnc" | "term",
+  ) => invoke<ConsoleInfo>("open_console", { connectionId, node, kind, vmid, mode }),
   listConnections: () => invoke<ConnectionInfo[]>("list_connections"),
   saveConnection: (info: ConnectionInfo, token?: string) =>
     invoke<void>("save_connection", { info, token: token || null }),

@@ -88,6 +88,9 @@ onMounted(refresh);
   <div>
     <div class="head">
       <h1>{{ kind === "qemu" ? "VM" : "CT" }} {{ vmid }} <small>on {{ node }}</small></h1>
+      <router-link :to="`/guests/${node}/${kind}/${vmid}/console`">
+        Console
+      </router-link>
       <router-link to="/guests">
         Back to list
       </router-link>
