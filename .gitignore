@@ -28,3 +28,7 @@ desktop.ini
 *.log
 dist-ssr/
 
+
+# Claude Code local
+.claude/
+
