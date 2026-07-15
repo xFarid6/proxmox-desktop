@@ -13,6 +13,16 @@ pub fn run() {
             commands::test_connection,
             commands::cluster_resources,
             commands::guest_power,
+            commands::node_tasks,
+            commands::task_status,
+            commands::task_log,
+            commands::node_network,
+            commands::guest_config,
+            commands::set_guest_config,
+            commands::resize_disk,
+            commands::node_storages,
+            commands::storage_content,
+            commands::create_guest,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
