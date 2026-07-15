@@ -2,7 +2,7 @@
 
 Native desktop client for [Proxmox VE](https://www.proxmox.com/en/proxmox-virtual-environment/overview), built with Tauri v2 (Rust) and Vue 3.
 
-> **Status: early development.** Nothing usable yet — repo scaffolding in progress.
+> **Status: v1 feature-complete, pre-release.** Tested against a mocked Proxmox API in CI — not yet verified against a live cluster.
 
 ## Tech stack
 

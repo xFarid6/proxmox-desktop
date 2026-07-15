@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
 import { api, type GuestKind } from "../api";
 import { activeId } from "../stores/connections";
+import { toast } from "../stores/toast";
 
 const route = useRoute();
 const node = route.params.node as string;
@@ -12,7 +13,6 @@ const vmid = Number(route.params.vmid);
 const config = ref<Record<string, unknown>>({});
 const loading = ref(false);
 const error = ref("");
-const notice = ref("");
 
 // Edit form state, seeded from config.
 const cores = ref("");
@@ -54,7 +54,6 @@ async function refresh() {
 async function saveHardware() {
   if (!activeId.value) return;
   saving.value = true;
-  notice.value = "";
   error.value = "";
   try {
     const params: Record<string, string> = {};
@@ -66,16 +65,16 @@ async function saveHardware() {
     }
     if (Object.keys(params).length > 0) {
       await api.setGuestConfig(activeId.value, node, kind, vmid, params);
-      notice.value = "Config updated.";
+      toast("Config updated.");
     }
     if (disk.value && grow.value) {
       await api.resizeDisk(activeId.value, node, kind, vmid, disk.value, `+${grow.value}G`);
-      notice.value += " Disk resize started.";
+      toast("Disk resize started.");
       grow.value = "";
     }
     await refresh();
   } catch (e) {
-    error.value = String(e);
+    toast(String(e), "error");
   } finally {
     saving.value = false;
   }
@@ -111,13 +110,6 @@ onMounted(refresh);
     >
       {{ error }}
     </p>
-    <p
-      v-if="notice"
-      class="notice"
-    >
-      {{ notice }}
-    </p>
-
     <div
       v-if="activeId && !loading"
       class="cols"
@@ -270,9 +262,5 @@ td {
 
 .error {
   color: #c33;
-}
-
-.notice {
-  color: #2a7;
 }
 </style>

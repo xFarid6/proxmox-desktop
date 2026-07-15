@@ -2,6 +2,7 @@
 import { onMounted, reactive, ref } from "vue";
 import { api, type ConnectionInfo } from "../api";
 import { activeId, connections, refreshConnections, setActive } from "../stores/connections";
+import { toast } from "../stores/toast";
 
 const editing = ref(false);
 const testResult = ref("");
@@ -43,6 +44,7 @@ async function test() {
       connectionId: form.id || undefined,
     });
     testResult.value = `OK — Proxmox VE ${v.version}`;
+    toast(`Connected: Proxmox VE ${v.version}`);
   } catch (e) {
     error.value = String(e);
   } finally {
@@ -62,6 +64,7 @@ async function save() {
     };
     await api.saveConnection(info, form.token || undefined);
     editing.value = false;
+    toast("Connection saved");
     await refreshConnections();
   } catch (e) {
     error.value = String(e);
@@ -74,6 +77,7 @@ async function remove(id: string) {
   error.value = "";
   try {
     await api.deleteConnection(id);
+    toast("Connection removed");
     await refreshConnections();
   } catch (e) {
     error.value = String(e);
