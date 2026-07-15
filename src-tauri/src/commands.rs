@@ -2,7 +2,10 @@
 //! Errors cross the bridge as strings; tokens never appear in return values.
 
 use crate::connections::{self, ConnectionInfo};
-use crate::proxmox::types::{ClusterResource, GuestKind, PowerAction, Version};
+use crate::proxmox::types::{
+    ClusterResource, GuestKind, NetworkInterface, PowerAction, StorageContent, StorageSummary,
+    TaskEntry, TaskLogLine, TaskStatus, Version,
+};
 use crate::proxmox::Client;
 
 #[tauri::command]
@@ -48,6 +51,151 @@ pub async fn guest_power(
     let client = connections::client_for(&app, &connection_id)?;
     client
         .power(&node, kind, vmid, action)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Storages available on a node.
+#[tauri::command]
+pub async fn node_storages(
+    app: tauri::AppHandle,
+    connection_id: String,
+    node: String,
+) -> Result<Vec<StorageSummary>, String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client.node_storages(&node).await.map_err(|e| e.to_string())
+}
+
+/// Volumes on a storage, optionally filtered by content type (iso, vztmpl, ...).
+#[tauri::command]
+pub async fn storage_content(
+    app: tauri::AppHandle,
+    connection_id: String,
+    node: String,
+    storage: String,
+    content: Option<String>,
+) -> Result<Vec<StorageContent>, String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client
+        .storage_content(&node, &storage, content.as_deref())
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Create a VM or CT from raw params. Returns the creation task UPID.
+#[tauri::command]
+pub async fn create_guest(
+    app: tauri::AppHandle,
+    connection_id: String,
+    node: String,
+    kind: GuestKind,
+    params: std::collections::HashMap<String, String>,
+) -> Result<String, String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client
+        .create_guest(&node, kind, &params)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Raw guest config as JSON — key set varies wildly between qemu and lxc.
+#[tauri::command]
+pub async fn guest_config(
+    app: tauri::AppHandle,
+    connection_id: String,
+    node: String,
+    kind: GuestKind,
+    vmid: u32,
+) -> Result<serde_json::Value, String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client
+        .guest_config(&node, kind, vmid)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Update config fields (cores, memory, ...). Returns a UPID for qemu, None for lxc.
+#[tauri::command]
+pub async fn set_guest_config(
+    app: tauri::AppHandle,
+    connection_id: String,
+    node: String,
+    kind: GuestKind,
+    vmid: u32,
+    params: std::collections::HashMap<String, String>,
+) -> Result<Option<String>, String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client
+        .set_guest_config(&node, kind, vmid, &params)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Grow a disk: size like "+5G". Shrinking is not supported by Proxmox.
+#[tauri::command]
+pub async fn resize_disk(
+    app: tauri::AppHandle,
+    connection_id: String,
+    node: String,
+    kind: GuestKind,
+    vmid: u32,
+    disk: String,
+    size: String,
+) -> Result<Option<String>, String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client
+        .resize_disk(&node, kind, vmid, &disk, &size)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Network interfaces on a node — read-only view.
+#[tauri::command]
+pub async fn node_network(
+    app: tauri::AppHandle,
+    connection_id: String,
+    node: String,
+) -> Result<Vec<NetworkInterface>, String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client.node_network(&node).await.map_err(|e| e.to_string())
+}
+
+/// Recent tasks on a node (server-side limit 50).
+#[tauri::command]
+pub async fn node_tasks(
+    app: tauri::AppHandle,
+    connection_id: String,
+    node: String,
+) -> Result<Vec<TaskEntry>, String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client.node_tasks(&node).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn task_status(
+    app: tauri::AppHandle,
+    connection_id: String,
+    node: String,
+    upid: String,
+) -> Result<TaskStatus, String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client
+        .task_status(&node, &upid)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn task_log(
+    app: tauri::AppHandle,
+    connection_id: String,
+    node: String,
+    upid: String,
+    start: Option<u64>,
+) -> Result<Vec<TaskLogLine>, String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client
+        .task_log(&node, &upid, start.unwrap_or(0))
         .await
         .map_err(|e| e.to_string())
 }
