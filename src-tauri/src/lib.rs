@@ -1,5 +1,6 @@
 pub mod commands;
 pub mod connections;
+pub mod console;
 pub mod proxmox;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -23,6 +24,7 @@ pub fn run() {
             commands::node_storages,
             commands::storage_content,
             commands::create_guest,
+            console::open_console,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

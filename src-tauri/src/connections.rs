@@ -52,14 +52,24 @@ pub fn get_token(id: &str) -> Result<String, String> {
     token_entry(id)?.get_password().map_err(|e| e.to_string())
 }
 
-/// Build an API client for a saved connection (info from disk, token from keyring).
-pub fn client_for(app: &tauri::AppHandle, id: &str) -> Result<Client, String> {
+/// Info from disk + token from keyring for a saved connection.
+pub fn info_and_token(
+    app: &tauri::AppHandle,
+    id: &str,
+) -> Result<(ConnectionInfo, String), String> {
     let conns = load(app)?;
     let info = conns
         .iter()
         .find(|c| c.id == id)
+        .cloned()
         .ok_or_else(|| format!("unknown connection: {id}"))?;
     let token = get_token(id)?;
+    Ok((info, token))
+}
+
+/// Build an API client for a saved connection (info from disk, token from keyring).
+pub fn client_for(app: &tauri::AppHandle, id: &str) -> Result<Client, String> {
+    let (info, token) = info_and_token(app, id)?;
     Client::new(&info.host, &token, info.accept_invalid_certs).map_err(|e| e.to_string())
 }
 
