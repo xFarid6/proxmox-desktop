@@ -9,7 +9,7 @@ dist/
 
 # Tauri
 src-tauri/target/
-src-tauri/gen/
+src-tauri/gen/schemas/
 
 # OS
 .DS_Store
