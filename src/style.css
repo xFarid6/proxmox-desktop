@@ -48,6 +48,69 @@ select {
   font-family: inherit;
 }
 
+/* Mobile (#47): touch targets + v-cards tables collapse to cards.
+   !important only on structural display props: view-scoped table styles
+   (td[data-v-x]) otherwise outrank these global rules. */
+@media (max-width: 768px) {
+  button,
+  input,
+  select {
+    min-height: 44px;
+  }
+
+  table[data-cards] {
+    display: block !important;
+  }
+
+  table[data-cards] thead {
+    display: none !important;
+  }
+
+  table[data-cards] tbody {
+    display: block !important;
+  }
+
+  table[data-cards] tbody tr {
+    display: block !important;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 8px 12px;
+    margin-bottom: 10px;
+    background: #fff;
+  }
+
+  table[data-cards] td {
+    display: flex !important;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+    padding: 4px 0;
+    border: none;
+    text-align: right;
+  }
+
+  table[data-cards] td::before {
+    content: attr(data-label);
+    font-weight: 600;
+    text-align: left;
+  }
+
+  table[data-cards] td[data-label=""]::before {
+    content: none;
+  }
+
+  table[data-cards] td:empty {
+    display: none !important;
+  }
+}
+
+@media (max-width: 768px) and (prefers-color-scheme: dark) {
+  table[data-cards] tbody tr {
+    background: #2a2a2a;
+    border-color: #444;
+  }
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
     color: #ececec;

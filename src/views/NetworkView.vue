@@ -74,7 +74,10 @@ watch(activeId, () => {
       {{ error }}
     </p>
 
-    <table v-else-if="interfaces.length > 0">
+    <table
+      v-else-if="interfaces.length > 0"
+      v-cards
+    >
       <thead>
         <tr>
           <th>Interface</th>

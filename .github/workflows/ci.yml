@@ -81,6 +81,40 @@ jobs:
           workspaces: src-tauri
       - run: cargo test
 
+  # Informational: debug APK for the Android target (issue #46).
+  android-build:
+    name: android-build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: android-actions/setup-android@v3
+      - run: sdkmanager "ndk;26.1.10909125"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm tauri android build --debug --target aarch64
+        env:
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/26.1.10909125
+      - uses: actions/upload-artifact@v4
+        with:
+          name: proxmox-desktop-debug-apk
+          path: src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+
   tauri-build:
     name: tauri-build
     runs-on: ubuntu-latest
