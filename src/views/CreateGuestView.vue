@@ -21,6 +21,26 @@ const bridge = ref("vmbr0");
 const media = ref("");
 const password = ref("");
 
+// Advanced (both kinds).
+const startAfter = ref(false);
+const vlanTag = ref<number>();
+// qemu advanced + cloud-init.
+const qemuAgent = ref(true);
+const ciEnabled = ref(false);
+const ciUser = ref("");
+const ciPassword = ref("");
+const ciSshKeys = ref("");
+const ciIpMode = ref<"dhcp" | "static">("dhcp");
+const ciIpAddr = ref("");
+const ciGw = ref("");
+// lxc advanced.
+const lxcUnpriv = ref(true);
+const lxcNesting = ref(false);
+const lxcSshKey = ref("");
+const lxcIpMode = ref<"dhcp" | "static">("dhcp");
+const lxcIpAddr = ref("");
+const lxcGw = ref("");
+
 const storages = ref<StorageSummary[]>([]);
 const mediaVolumes = ref<StorageContent[]>([]);
 const submitting = ref(false);
@@ -67,19 +87,41 @@ async function submit() {
       cores: String(cores.value),
       memory: String(memory.value),
     };
+    if (startAfter.value) params.start = "1";
+    const tag = vlanTag.value ? `,tag=${vlanTag.value}` : "";
     if (kind.value === "qemu") {
       if (name.value) params.name = name.value;
       params.scsihw = "virtio-scsi-pci";
       params.scsi0 = `${diskStorage.value}:${diskSize.value}`;
-      params.net0 = `virtio,bridge=${bridge.value}`;
+      params.net0 = `virtio,bridge=${bridge.value}${tag}`;
       params.ostype = "l26";
+      if (qemuAgent.value) params.agent = "1";
       if (media.value) params.ide2 = `${media.value},media=cdrom`;
+      if (ciEnabled.value) {
+        // Cloud-init drive on ide0 — ide2 may hold the install ISO.
+        params.ide0 = `${diskStorage.value}:cloudinit`;
+        if (ciUser.value) params.ciuser = ciUser.value;
+        if (ciPassword.value) params.cipassword = ciPassword.value;
+        // PVE expects sshkeys pre-urlencoded.
+        if (ciSshKeys.value.trim()) params.sshkeys = encodeURIComponent(ciSshKeys.value.trim());
+        params.ipconfig0 =
+          ciIpMode.value === "dhcp"
+            ? "ip=dhcp"
+            : `ip=${ciIpAddr.value}${ciGw.value ? `,gw=${ciGw.value}` : ""}`;
+      }
     } else {
       if (name.value) params.hostname = name.value;
       params.ostemplate = media.value;
       params.rootfs = `${diskStorage.value}:${diskSize.value}`;
-      params.net0 = `name=eth0,bridge=${bridge.value},ip=dhcp`;
+      const ip =
+        lxcIpMode.value === "dhcp"
+          ? "ip=dhcp"
+          : `ip=${lxcIpAddr.value}${lxcGw.value ? `,gw=${lxcGw.value}` : ""}`;
+      params.net0 = `name=eth0,bridge=${bridge.value}${tag},${ip}`;
       if (password.value) params.password = password.value;
+      params.unprivileged = lxcUnpriv.value ? "1" : "0";
+      if (lxcNesting.value) params.features = "nesting=1";
+      if (lxcSshKey.value.trim()) params["ssh-public-keys"] = lxcSshKey.value.trim();
     }
     await api.createGuest(activeId.value, node.value, kind.value, params);
     toast(`Creation task started for ${vmid.value}`);
@@ -224,6 +266,135 @@ watch([node, kind], loadStorages);
         >
       </label>
 
+      <details>
+        <summary>Advanced</summary>
+        <div class="section">
+          <label class="inline">
+            <input
+              v-model="startAfter"
+              type="checkbox"
+            >
+            Start after creation
+          </label>
+          <label>
+            VLAN tag
+            <input
+              v-model.number="vlanTag"
+              type="number"
+              min="1"
+              max="4094"
+              placeholder="none"
+            >
+          </label>
+          <template v-if="kind === 'qemu'">
+            <label class="inline">
+              <input
+                v-model="qemuAgent"
+                type="checkbox"
+              >
+              QEMU guest agent
+            </label>
+          </template>
+          <template v-else>
+            <label class="inline">
+              <input
+                v-model="lxcUnpriv"
+                type="checkbox"
+              >
+              Unprivileged container
+            </label>
+            <label class="inline">
+              <input
+                v-model="lxcNesting"
+                type="checkbox"
+              >
+              Nesting
+            </label>
+            <label>
+              SSH public key
+              <textarea
+                v-model="lxcSshKey"
+                rows="2"
+                placeholder="ssh-ed25519 …"
+              />
+            </label>
+            <label>
+              IPv4
+              <span class="row">
+                <select v-model="lxcIpMode">
+                  <option value="dhcp">DHCP</option>
+                  <option value="static">Static</option>
+                </select>
+                <template v-if="lxcIpMode === 'static'">
+                  <input
+                    v-model="lxcIpAddr"
+                    placeholder="10.0.0.50/24"
+                  >
+                  <input
+                    v-model="lxcGw"
+                    placeholder="gateway"
+                  >
+                </template>
+              </span>
+            </label>
+          </template>
+        </div>
+      </details>
+
+      <details v-if="kind === 'qemu'">
+        <summary>Cloud-init</summary>
+        <div class="section">
+          <label class="inline">
+            <input
+              v-model="ciEnabled"
+              type="checkbox"
+            >
+            Add cloud-init drive
+          </label>
+          <template v-if="ciEnabled">
+            <label>
+              User
+              <input v-model="ciUser">
+            </label>
+            <label>
+              Password
+              <input
+                v-model="ciPassword"
+                type="password"
+                autocomplete="new-password"
+              >
+            </label>
+            <label>
+              SSH public keys
+              <textarea
+                v-model="ciSshKeys"
+                rows="2"
+                placeholder="ssh-ed25519 …"
+              />
+            </label>
+            <label>
+              IPv4
+              <span class="row">
+                <select v-model="ciIpMode">
+                  <option value="dhcp">DHCP</option>
+                  <option value="static">Static</option>
+                </select>
+                <template v-if="ciIpMode === 'static'">
+                  <input
+                    v-model="ciIpAddr"
+                    placeholder="10.0.0.51/24"
+                  >
+                  <input
+                    v-model="ciGw"
+                    placeholder="gateway"
+                  >
+                </template>
+              </span>
+            </label>
+          </template>
+        </div>
+      </details>
+
       <p
         v-if="error"
         class="error"
@@ -277,6 +448,28 @@ label {
 
 .row input {
   width: 80px;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 10px 0 0 8px;
+}
+
+label.inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+
+.section .row input {
+  width: 120px;
+}
+
+textarea {
+  font-family: inherit;
+  font-size: inherit;
 }
 
 .error {
