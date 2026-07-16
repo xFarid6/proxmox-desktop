@@ -203,7 +203,10 @@ watch(activeId, refresh);
         </button>
       </div>
 
-      <table v-if="users.length > 0">
+      <table
+        v-if="users.length > 0"
+        v-cards
+      >
         <thead>
           <tr>
             <th>User</th>
@@ -273,7 +276,10 @@ watch(activeId, refresh);
         </button>
       </div>
 
-      <table v-if="acl.length > 0">
+      <table
+        v-if="acl.length > 0"
+        v-cards
+      >
         <thead>
           <tr>
             <th>Path</th>
@@ -310,7 +316,10 @@ watch(activeId, refresh);
       </p>
 
       <h2>Realms</h2>
-      <table v-if="domains.length > 0">
+      <table
+        v-if="domains.length > 0"
+        v-cards
+      >
         <thead>
           <tr>
             <th>Realm</th>

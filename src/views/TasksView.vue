@@ -102,7 +102,10 @@ watch(activeId, () => {
       v-else
       class="split"
     >
-      <table v-if="tasks.length > 0">
+      <table
+        v-if="tasks.length > 0"
+        v-cards
+      >
         <thead>
           <tr>
             <th>Start</th>

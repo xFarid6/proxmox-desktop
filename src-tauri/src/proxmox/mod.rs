@@ -22,8 +22,12 @@ impl Client {
     /// `base_url` like `https://pve.example.com:8006`, `token` the full
     /// `user@realm!tokenid=uuid` value.
     pub fn new(base_url: &str, token: &str, accept_invalid_certs: bool) -> Result<Self> {
+        // Timeouts so a dead route (mobile network switch, tailnet peer
+        // offline) fails fast instead of hanging the UI forever.
         let http = reqwest::Client::builder()
             .danger_accept_invalid_certs(accept_invalid_certs)
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_secs(30))
             .build()?;
         Ok(Self {
             http,
