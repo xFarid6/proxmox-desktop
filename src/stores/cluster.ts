@@ -24,8 +24,9 @@ export async function refreshCluster() {
   try {
     resources.value = await api.clusterResources(activeId.value);
   } catch (e) {
+    // Keep stale data — a network switch or offline blip shouldn't blank
+    // the UI; the error banner shows alongside.
     error.value = String(e);
-    resources.value = [];
   } finally {
     loading.value = false;
   }

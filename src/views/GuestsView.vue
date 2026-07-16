@@ -83,7 +83,10 @@ onMounted(refreshCluster);
     >
       {{ error }}
     </p>
-    <table v-if="activeId && !loading && filtered.length > 0">
+    <table
+      v-if="activeId && !loading && filtered.length > 0"
+      v-cards
+    >
       <thead>
         <tr>
           <th>ID</th>

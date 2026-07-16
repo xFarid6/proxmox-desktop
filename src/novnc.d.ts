@@ -10,5 +10,7 @@ declare module "@novnc/novnc" {
     scaleViewport: boolean;
     resizeSession: boolean;
     disconnect(): void;
+    sendKey(keysym: number, code?: string | null, down?: boolean): void;
+    sendCtrlAltDel(): void;
   }
 }
