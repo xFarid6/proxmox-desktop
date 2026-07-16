@@ -47,13 +47,21 @@ async function poll() {
     if (t.status && t.status !== "OK") {
       const label = `${t.type}${t.id ? ` ${t.id}` : ""} on ${t.node}`;
       toast(`Task failed: ${label} — ${t.status}`, "error");
-      void notify("Proxmox task failed", `${label}: ${t.status}`);
+      // System notification only when the app is backgrounded — the toast
+      // already covers the visible case, and this avoids double alerts on
+      // Android where the notification would land on top of the open app.
+      if (document.hidden) void notify("Proxmox task failed", `${label}: ${t.status}`);
     }
   }
 }
 
 export function startTaskAlerts() {
   if (timer) return;
+  // Ask now, while foregrounded — Android 13+ can't show the permission
+  // prompt later from the background when the first failure arrives.
+  void isPermissionGranted()
+    .then((g) => (g ? "granted" : requestPermission()))
+    .catch(() => {});
   timer = window.setInterval(() => void poll(), POLL_MS);
   watch(activeId, () => {
     seen.clear();
