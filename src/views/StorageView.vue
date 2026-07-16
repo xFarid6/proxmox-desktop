@@ -184,7 +184,10 @@ watch(activeId, refresh);
         {{ error }}
       </p>
 
-      <table v-else-if="configs.length > 0">
+      <table
+        v-else-if="configs.length > 0"
+        v-cards
+      >
         <thead>
           <tr>
             <th>Storage</th>

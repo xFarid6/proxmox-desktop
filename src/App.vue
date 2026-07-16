@@ -81,4 +81,33 @@ const nav = [
   overflow: auto;
   padding: 20px 24px;
 }
+
+/* Mobile (#47): sidebar becomes bottom tab bar */
+@media (max-width: 768px) {
+  .layout {
+    flex-direction: column-reverse;
+  }
+
+  .sidebar {
+    width: 100%;
+    flex-direction: row;
+    overflow-x: auto;
+    gap: 4px;
+    padding: 4px 6px;
+    padding-bottom: calc(4px + env(safe-area-inset-bottom));
+  }
+
+  .brand {
+    display: none;
+  }
+
+  .nav-link {
+    white-space: nowrap;
+    padding: 12px 14px;
+  }
+
+  .content {
+    padding: 14px 12px;
+  }
+}
 </style>
