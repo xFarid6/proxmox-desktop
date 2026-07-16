@@ -28,6 +28,11 @@ pub fn run() {
             commands::delete_volume,
             commands::backup_jobs,
             commands::replication_jobs,
+            commands::firewall_rules,
+            commands::add_firewall_rule,
+            commands::delete_firewall_rule,
+            commands::firewall_options,
+            commands::set_firewall_options,
             console::open_console,
         ])
         .run(tauri::generate_context!())

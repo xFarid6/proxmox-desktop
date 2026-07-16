@@ -86,6 +86,27 @@ export interface BackupJob {
   node?: string;
 }
 
+export interface FirewallRule {
+  pos: number;
+  type: string;
+  action: string;
+  enable?: number;
+  proto?: string;
+  dport?: string;
+  sport?: string;
+  source?: string;
+  dest?: string;
+  iface?: string;
+  comment?: string;
+}
+
+/** Firewall scope: {} = cluster, {node} = node, {node, kind, vmid} = guest. */
+export interface FirewallScope {
+  node?: string;
+  kind?: GuestKind;
+  vmid?: number;
+}
+
 export interface ReplicationJob {
   id: string;
   type?: string;
@@ -182,6 +203,19 @@ export const api = {
   backupJobs: (connectionId: string) => invoke<BackupJob[]>("backup_jobs", { connectionId }),
   replicationJobs: (connectionId: string) =>
     invoke<ReplicationJob[]>("replication_jobs", { connectionId }),
+  firewallRules: (connectionId: string, scope: FirewallScope) =>
+    invoke<FirewallRule[]>("firewall_rules", { connectionId, ...scope }),
+  addFirewallRule: (connectionId: string, scope: FirewallScope, params: Record<string, string>) =>
+    invoke<void>("add_firewall_rule", { connectionId, ...scope, params }),
+  deleteFirewallRule: (connectionId: string, scope: FirewallScope, pos: number) =>
+    invoke<void>("delete_firewall_rule", { connectionId, ...scope, pos }),
+  firewallOptions: (connectionId: string, scope: FirewallScope) =>
+    invoke<Record<string, unknown>>("firewall_options", { connectionId, ...scope }),
+  setFirewallOptions: (
+    connectionId: string,
+    scope: FirewallScope,
+    params: Record<string, string>,
+  ) => invoke<void>("set_firewall_options", { connectionId, ...scope, params }),
   testConnection: (opts: {
     host: string;
     token?: string;

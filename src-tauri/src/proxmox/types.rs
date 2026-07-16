@@ -160,6 +160,23 @@ pub struct BackupJob {
     pub node: Option<String>,
 }
 
+/// One rule from `GET {cluster|node|guest}/firewall/rules`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FirewallRule {
+    pub pos: u32,
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub action: String,
+    pub enable: Option<u8>,
+    pub proto: Option<String>,
+    pub dport: Option<String>,
+    pub sport: Option<String>,
+    pub source: Option<String>,
+    pub dest: Option<String>,
+    pub iface: Option<String>,
+    pub comment: Option<String>,
+}
+
 /// One job from `GET /cluster/replication`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplicationJob {

@@ -3,8 +3,8 @@
 
 use crate::connections::{self, ConnectionInfo};
 use crate::proxmox::types::{
-    BackupJob, ClusterResource, GuestKind, NetworkInterface, PowerAction, ReplicationJob,
-    StorageContent, StorageSummary, TaskEntry, TaskLogLine, TaskStatus, Version,
+    BackupJob, ClusterResource, FirewallRule, GuestKind, NetworkInterface, PowerAction,
+    ReplicationJob, StorageContent, StorageSummary, TaskEntry, TaskLogLine, TaskStatus, Version,
 };
 use crate::proxmox::Client;
 
@@ -249,6 +249,98 @@ pub async fn replication_jobs(
 ) -> Result<Vec<ReplicationJob>, String> {
     let client = connections::client_for(&app, &connection_id)?;
     client.replication_jobs().await.map_err(|e| e.to_string())
+}
+
+/// Firewall scope -> API path base. Cluster when node is None,
+/// node when only node is set, guest when kind+vmid are set too.
+fn fw_base(node: Option<String>, kind: Option<GuestKind>, vmid: Option<u32>) -> String {
+    match (node, kind, vmid) {
+        (Some(n), Some(k), Some(v)) => format!("/nodes/{n}/{}/{v}", k.as_path()),
+        (Some(n), _, _) => format!("/nodes/{n}"),
+        _ => "/cluster".to_string(),
+    }
+}
+
+#[tauri::command]
+pub async fn firewall_rules(
+    app: tauri::AppHandle,
+    connection_id: String,
+    node: Option<String>,
+    kind: Option<GuestKind>,
+    vmid: Option<u32>,
+) -> Result<Vec<FirewallRule>, String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client
+        .firewall_rules(&fw_base(node, kind, vmid))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn add_firewall_rule(
+    app: tauri::AppHandle,
+    connection_id: String,
+    node: Option<String>,
+    kind: Option<GuestKind>,
+    vmid: Option<u32>,
+    params: std::collections::HashMap<String, String>,
+) -> Result<(), String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client
+        .add_firewall_rule(&fw_base(node, kind, vmid), &params)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn delete_firewall_rule(
+    app: tauri::AppHandle,
+    connection_id: String,
+    node: Option<String>,
+    kind: Option<GuestKind>,
+    vmid: Option<u32>,
+    pos: u32,
+) -> Result<(), String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client
+        .delete_firewall_rule(&fw_base(node, kind, vmid), pos)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+/// Raw firewall options for a scope (enable, policy_in, ...).
+#[tauri::command]
+pub async fn firewall_options(
+    app: tauri::AppHandle,
+    connection_id: String,
+    node: Option<String>,
+    kind: Option<GuestKind>,
+    vmid: Option<u32>,
+) -> Result<serde_json::Value, String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client
+        .firewall_options(&fw_base(node, kind, vmid))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn set_firewall_options(
+    app: tauri::AppHandle,
+    connection_id: String,
+    node: Option<String>,
+    kind: Option<GuestKind>,
+    vmid: Option<u32>,
+    params: std::collections::HashMap<String, String>,
+) -> Result<(), String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client
+        .set_firewall_options(&fw_base(node, kind, vmid), &params)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 /// Probe host+token before saving. For a saved connection pass no token —
