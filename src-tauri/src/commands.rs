@@ -4,7 +4,8 @@
 use crate::connections::{self, ConnectionInfo};
 use crate::proxmox::types::{
     BackupJob, ClusterResource, FirewallRule, GuestKind, NetworkInterface, PowerAction,
-    ReplicationJob, StorageContent, StorageSummary, TaskEntry, TaskLogLine, TaskStatus, Version,
+    ReplicationJob, StorageConfig, StorageContent, StorageSummary, TaskEntry, TaskLogLine,
+    TaskStatus, Version,
 };
 use crate::proxmox::Client;
 
@@ -249,6 +250,46 @@ pub async fn replication_jobs(
 ) -> Result<Vec<ReplicationJob>, String> {
     let client = connections::client_for(&app, &connection_id)?;
     client.replication_jobs().await.map_err(|e| e.to_string())
+}
+
+/// Cluster-wide storage definitions (storage.cfg).
+#[tauri::command]
+pub async fn storage_configs(
+    app: tauri::AppHandle,
+    connection_id: String,
+) -> Result<Vec<StorageConfig>, String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client.storage_configs().await.map_err(|e| e.to_string())
+}
+
+/// Add a storage definition.
+#[tauri::command]
+pub async fn add_storage(
+    app: tauri::AppHandle,
+    connection_id: String,
+    params: std::collections::HashMap<String, String>,
+) -> Result<(), String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client
+        .add_storage(&params)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+/// Remove a storage definition (data on it is left untouched).
+#[tauri::command]
+pub async fn delete_storage(
+    app: tauri::AppHandle,
+    connection_id: String,
+    storage: String,
+) -> Result<(), String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client
+        .delete_storage(&storage)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 /// Firewall scope -> API path base. Cluster when node is None,

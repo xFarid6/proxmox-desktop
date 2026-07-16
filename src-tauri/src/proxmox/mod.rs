@@ -256,6 +256,21 @@ impl Client {
         self.get("/cluster/replication").await
     }
 
+    /// Cluster-wide storage definitions (storage.cfg).
+    pub async fn storage_configs(&self) -> Result<Vec<StorageConfig>> {
+        self.get("/storage").await
+    }
+
+    /// Add a storage definition (params: storage, type, content, path/server/...).
+    pub async fn add_storage(&self, params: &HashMap<String, String>) -> Result<serde_json::Value> {
+        self.post("/storage", params).await
+    }
+
+    /// Remove a storage definition. Does not touch the data on it.
+    pub async fn delete_storage(&self, storage: &str) -> Result<serde_json::Value> {
+        self.delete_req(&format!("/storage/{storage}")).await
+    }
+
     /// Firewall endpoints share one shape across scopes; `base` is
     /// "/cluster", "/nodes/{node}" or "/nodes/{node}/{qemu|lxc}/{vmid}".
     pub async fn firewall_rules(&self, base: &str) -> Result<Vec<FirewallRule>> {

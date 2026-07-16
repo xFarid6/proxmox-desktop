@@ -189,6 +189,22 @@ pub struct ReplicationJob {
     pub disable: Option<u8>,
 }
 
+/// One entry from `GET /storage` — cluster-wide storage.cfg definitions.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageConfig {
+    pub storage: String,
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub content: Option<String>,
+    pub path: Option<String>,
+    pub server: Option<String>,
+    pub export: Option<String>,
+    pub share: Option<String>,
+    pub nodes: Option<String>,
+    pub shared: Option<u8>,
+    pub disable: Option<u8>,
+}
+
 /// One entry from `GET /nodes/{node}/storage`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageSummary {

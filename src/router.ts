@@ -15,6 +15,7 @@ const routes = [
   { path: "/network", component: () => import("./views/NetworkView.vue") },
   { path: "/backups", component: () => import("./views/BackupsView.vue") },
   { path: "/firewall", component: () => import("./views/FirewallView.vue") },
+  { path: "/storage", component: () => import("./views/StorageView.vue") },
 ];
 
 export default createRouter({

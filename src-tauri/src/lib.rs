@@ -33,6 +33,9 @@ pub fn run() {
             commands::delete_firewall_rule,
             commands::firewall_options,
             commands::set_firewall_options,
+            commands::storage_configs,
+            commands::add_storage,
+            commands::delete_storage,
             console::open_console,
         ])
         .run(tauri::generate_context!())
