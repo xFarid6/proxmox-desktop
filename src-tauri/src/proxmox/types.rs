@@ -215,6 +215,46 @@ pub struct StorageSummary {
     pub total: Option<u64>,
 }
 
+/// One entry from `GET /access/users`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccessUser {
+    pub userid: String,
+    pub comment: Option<String>,
+    pub enable: Option<u8>,
+    pub expire: Option<u64>,
+    pub email: Option<String>,
+    pub groups: Option<serde_json::Value>,
+}
+
+/// One entry from `GET /access/domains` (auth realms).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccessDomain {
+    pub realm: String,
+    #[serde(rename = "type")]
+    pub kind: Option<String>,
+    pub comment: Option<String>,
+    pub default: Option<u8>,
+}
+
+/// One entry from `GET /access/acl`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AclEntry {
+    pub path: String,
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub ugid: String,
+    pub roleid: String,
+    pub propagate: Option<u8>,
+}
+
+/// One entry from `GET /access/roles`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccessRole {
+    pub roleid: String,
+    pub privs: Option<String>,
+    pub special: Option<u8>,
+}
+
 /// `POST /nodes/{node}/{qemu|lxc}/{vmid}/vncproxy` response.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VncProxy {

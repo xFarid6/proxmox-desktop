@@ -3,9 +3,9 @@
 
 use crate::connections::{self, ConnectionInfo};
 use crate::proxmox::types::{
-    BackupJob, ClusterResource, FirewallRule, GuestKind, NetworkInterface, PowerAction,
-    ReplicationJob, StorageConfig, StorageContent, StorageSummary, TaskEntry, TaskLogLine,
-    TaskStatus, Version,
+    AccessDomain, AccessRole, AccessUser, AclEntry, BackupJob, ClusterResource, FirewallRule,
+    GuestKind, NetworkInterface, PowerAction, ReplicationJob, StorageConfig, StorageContent,
+    StorageSummary, TaskEntry, TaskLogLine, TaskStatus, Version,
 };
 use crate::proxmox::Client;
 
@@ -250,6 +250,86 @@ pub async fn replication_jobs(
 ) -> Result<Vec<ReplicationJob>, String> {
     let client = connections::client_for(&app, &connection_id)?;
     client.replication_jobs().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn access_users(
+    app: tauri::AppHandle,
+    connection_id: String,
+) -> Result<Vec<AccessUser>, String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client.access_users().await.map_err(|e| e.to_string())
+}
+
+/// Create a user (userid like name@pve; password only works for pve realm).
+#[tauri::command]
+pub async fn add_user(
+    app: tauri::AppHandle,
+    connection_id: String,
+    params: std::collections::HashMap<String, String>,
+) -> Result<(), String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client
+        .add_user(&params)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn delete_user(
+    app: tauri::AppHandle,
+    connection_id: String,
+    userid: String,
+) -> Result<(), String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client
+        .delete_user(&userid)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn access_domains(
+    app: tauri::AppHandle,
+    connection_id: String,
+) -> Result<Vec<AccessDomain>, String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client.access_domains().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn access_roles(
+    app: tauri::AppHandle,
+    connection_id: String,
+) -> Result<Vec<AccessRole>, String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client.access_roles().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn access_acl(
+    app: tauri::AppHandle,
+    connection_id: String,
+) -> Result<Vec<AclEntry>, String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client.access_acl().await.map_err(|e| e.to_string())
+}
+
+/// Grant or revoke ACLs (path, roles, users; delete=1 revokes).
+#[tauri::command]
+pub async fn set_acl(
+    app: tauri::AppHandle,
+    connection_id: String,
+    params: std::collections::HashMap<String, String>,
+) -> Result<(), String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client
+        .set_acl(&params)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 /// Cluster-wide storage definitions (storage.cfg).

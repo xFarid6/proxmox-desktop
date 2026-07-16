@@ -422,3 +422,39 @@ async fn storage_configs_crud() {
     c.add_storage(&params).await.unwrap();
     c.delete_storage("nas").await.unwrap();
 }
+
+#[tokio::test]
+async fn access_users_and_acl() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api2/json/access/users"))
+        .respond_with(json(
+            r#"{"data":[{"userid":"root@pam","enable":1},{"userid":"alice@pve","comment":"dev","enable":1}]}"#,
+        ))
+        .mount(&server)
+        .await;
+    Mock::given(method("PUT"))
+        .and(path("/api2/json/access/acl"))
+        .and(body_string_contains("roles=PVEAuditor"))
+        .respond_with(json(r#"{"data":null}"#))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path("/api2/json/access/users/alice@pve"))
+        .respond_with(json(r#"{"data":null}"#))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let c = client(&server).await;
+    let users = c.access_users().await.unwrap();
+    assert_eq!(users[1].userid, "alice@pve");
+
+    let mut params = HashMap::new();
+    params.insert("path".to_string(), "/".to_string());
+    params.insert("users".to_string(), "alice@pve".to_string());
+    params.insert("roles".to_string(), "PVEAuditor".to_string());
+    c.set_acl(&params).await.unwrap();
+    c.delete_user("alice@pve").await.unwrap();
+}

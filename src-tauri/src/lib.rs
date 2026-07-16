@@ -36,6 +36,13 @@ pub fn run() {
             commands::storage_configs,
             commands::add_storage,
             commands::delete_storage,
+            commands::access_users,
+            commands::add_user,
+            commands::delete_user,
+            commands::access_domains,
+            commands::access_roles,
+            commands::access_acl,
+            commands::set_acl,
             console::open_console,
         ])
         .run(tauri::generate_context!())
