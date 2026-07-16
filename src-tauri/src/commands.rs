@@ -468,6 +468,7 @@ pub async fn set_firewall_options(
 /// it is read from the keyring.
 #[tauri::command]
 pub async fn test_connection(
+    app: tauri::AppHandle,
     host: String,
     token: Option<String>,
     accept_invalid_certs: bool,
@@ -475,7 +476,7 @@ pub async fn test_connection(
 ) -> Result<Version, String> {
     let token = match (token, connection_id) {
         (Some(t), _) => t,
-        (None, Some(id)) => connections::get_token(&id)?,
+        (None, Some(id)) => connections::get_token(&app, &id)?,
         (None, None) => return Err("token or connectionId required".into()),
     };
     let client = Client::new(&host, &token, accept_invalid_certs).map_err(|e| e.to_string())?;
