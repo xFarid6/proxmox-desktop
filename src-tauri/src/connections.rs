@@ -44,12 +44,19 @@ fn save_all(app: &tauri::AppHandle, conns: &[ConnectionInfo]) -> Result<(), Stri
     fs::write(store_path(app)?, raw).map_err(|e| e.to_string())
 }
 
+#[cfg(not(target_os = "android"))]
 fn token_entry(id: &str) -> Result<keyring::Entry, String> {
     keyring::Entry::new(KEYRING_SERVICE, id).map_err(|e| e.to_string())
 }
 
-pub fn get_token(id: &str) -> Result<String, String> {
+#[cfg(not(target_os = "android"))]
+pub fn get_token(_app: &tauri::AppHandle, id: &str) -> Result<String, String> {
     token_entry(id)?.get_password().map_err(|e| e.to_string())
+}
+
+#[cfg(target_os = "android")]
+pub fn get_token(app: &tauri::AppHandle, id: &str) -> Result<String, String> {
+    crate::android_keystore::get(app, id)
 }
 
 /// Info from disk + token from keyring for a saved connection.
@@ -63,7 +70,7 @@ pub fn info_and_token(
         .find(|c| c.id == id)
         .cloned()
         .ok_or_else(|| format!("unknown connection: {id}"))?;
-    let token = get_token(id)?;
+    let token = get_token(app, id)?;
     Ok((info, token))
 }
 
@@ -81,9 +88,12 @@ pub fn save(
     token: Option<String>,
 ) -> Result<(), String> {
     if let Some(t) = token {
+        #[cfg(not(target_os = "android"))]
         token_entry(&info.id)?
             .set_password(&t)
             .map_err(|e| e.to_string())?;
+        #[cfg(target_os = "android")]
+        crate::android_keystore::set(app, &info.id, &t)?;
     }
     let mut conns = load(app)?;
     match conns.iter_mut().find(|c| c.id == info.id) {
@@ -94,10 +104,13 @@ pub fn save(
 }
 
 pub fn delete(app: &tauri::AppHandle, id: &str) -> Result<(), String> {
+    // Best effort — the entry may already be gone.
+    #[cfg(not(target_os = "android"))]
     if let Ok(entry) = token_entry(id) {
-        // Best effort — the entry may already be gone.
         let _ = entry.delete_credential();
     }
+    #[cfg(target_os = "android")]
+    let _ = crate::android_keystore::delete(app, id);
     let mut conns = load(app)?;
     conns.retain(|c| c.id != id);
     save_all(app, &conns)
