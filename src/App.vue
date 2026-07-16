@@ -1,8 +1,38 @@
 <script setup lang="ts">
+import { ref } from "vue";
 import ToastList from "./components/ToastList.vue";
 import { startTaskAlerts } from "./stores/alerts";
+import { refreshCluster } from "./stores/cluster";
 
 startTaskAlerts();
+
+// Pull-to-refresh (#52): pulling down from the top re-keys the RouterView
+// (remount refetches the view's data) and refreshes the cluster store.
+const content = ref<HTMLElement | null>(null);
+const viewKey = ref(0);
+const pull = ref(0);
+let startY = 0;
+let pulling = false;
+
+function onTouchStart(e: TouchEvent) {
+  pulling = content.value?.scrollTop === 0;
+  startY = e.touches[0].clientY;
+  pull.value = 0;
+}
+
+function onTouchMove(e: TouchEvent) {
+  if (!pulling) return;
+  pull.value = Math.max(0, Math.min(100, e.touches[0].clientY - startY));
+}
+
+function onTouchEnd() {
+  if (pull.value > 70) {
+    viewKey.value++;
+    void refreshCluster();
+  }
+  pull.value = 0;
+  pulling = false;
+}
 
 const nav = [
   { to: "/connections", label: "Connections" },
@@ -32,8 +62,21 @@ const nav = [
         {{ item.label }}
       </RouterLink>
     </nav>
-    <main class="content">
-      <RouterView />
+    <main
+      ref="content"
+      class="content"
+      @touchstart.passive="onTouchStart"
+      @touchmove.passive="onTouchMove"
+      @touchend.passive="onTouchEnd"
+    >
+      <div
+        v-if="pull > 0"
+        class="pull-hint"
+        :style="{ height: `${pull / 2}px`, opacity: pull / 100 }"
+      >
+        {{ pull > 70 ? "release to refresh" : "↓ pull to refresh" }}
+      </div>
+      <RouterView :key="viewKey" />
     </main>
     <ToastList />
   </div>
@@ -80,5 +123,15 @@ const nav = [
   flex: 1;
   overflow: auto;
   padding: 20px 24px;
+  overscroll-behavior-y: contain;
+}
+
+.pull-hint {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.85em;
+  opacity: 0.7;
+  overflow: hidden;
 }
 </style>
