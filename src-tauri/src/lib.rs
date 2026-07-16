@@ -24,6 +24,10 @@ pub fn run() {
             commands::node_storages,
             commands::storage_content,
             commands::create_guest,
+            commands::vzdump,
+            commands::delete_volume,
+            commands::backup_jobs,
+            commands::replication_jobs,
             console::open_console,
         ])
         .run(tauri::generate_context!())

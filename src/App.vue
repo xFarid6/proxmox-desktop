@@ -7,6 +7,7 @@ const nav = [
   { to: "/guests", label: "VMs & CTs" },
   { to: "/tasks", label: "Tasks" },
   { to: "/network", label: "Network" },
+  { to: "/backups", label: "Backups" },
 ];
 </script>
 

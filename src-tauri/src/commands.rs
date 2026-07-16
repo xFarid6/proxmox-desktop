@@ -3,8 +3,8 @@
 
 use crate::connections::{self, ConnectionInfo};
 use crate::proxmox::types::{
-    ClusterResource, GuestKind, NetworkInterface, PowerAction, StorageContent, StorageSummary,
-    TaskEntry, TaskLogLine, TaskStatus, Version,
+    BackupJob, ClusterResource, GuestKind, NetworkInterface, PowerAction, ReplicationJob,
+    StorageContent, StorageSummary, TaskEntry, TaskLogLine, TaskStatus, Version,
 };
 use crate::proxmox::Client;
 
@@ -198,6 +198,57 @@ pub async fn task_log(
         .task_log(&node, &upid, start.unwrap_or(0))
         .await
         .map_err(|e| e.to_string())
+}
+
+/// Back up guests now via vzdump. Returns the task UPID.
+#[tauri::command]
+pub async fn vzdump(
+    app: tauri::AppHandle,
+    connection_id: String,
+    node: String,
+    params: std::collections::HashMap<String, String>,
+) -> Result<String, String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client
+        .vzdump(&node, &params)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Delete a storage volume (e.g. a backup archive).
+#[tauri::command]
+pub async fn delete_volume(
+    app: tauri::AppHandle,
+    connection_id: String,
+    node: String,
+    storage: String,
+    volid: String,
+) -> Result<Option<String>, String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client
+        .delete_volume(&node, &storage, &volid)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Scheduled backup jobs, cluster-wide.
+#[tauri::command]
+pub async fn backup_jobs(
+    app: tauri::AppHandle,
+    connection_id: String,
+) -> Result<Vec<BackupJob>, String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client.backup_jobs().await.map_err(|e| e.to_string())
+}
+
+/// Replication jobs, cluster-wide.
+#[tauri::command]
+pub async fn replication_jobs(
+    app: tauri::AppHandle,
+    connection_id: String,
+) -> Result<Vec<ReplicationJob>, String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client.replication_jobs().await.map_err(|e| e.to_string())
 }
 
 /// Probe host+token before saving. For a saved connection pass no token —

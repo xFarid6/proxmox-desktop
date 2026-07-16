@@ -90,6 +90,16 @@ impl Client {
         Self::decode(resp).await
     }
 
+    async fn delete_req<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
+        let resp = self
+            .http
+            .delete(self.url(path))
+            .header("Authorization", &self.auth_header)
+            .send()
+            .await?;
+        Self::decode(resp).await
+    }
+
     /// Cheap auth + reachability probe.
     pub async fn version(&self) -> Result<Version> {
         self.get("/version").await
@@ -216,6 +226,34 @@ impl Client {
     pub async fn task_log(&self, node: &str, upid: &str, start: u64) -> Result<Vec<TaskLogLine>> {
         self.get(&format!("/nodes/{node}/tasks/{upid}/log?start={start}"))
             .await
+    }
+
+    /// Back up guests now via vzdump (params: vmid, storage, mode, compress, ...).
+    /// Returns the task UPID.
+    pub async fn vzdump(&self, node: &str, params: &HashMap<String, String>) -> Result<String> {
+        self.post(&format!("/nodes/{node}/vzdump"), params).await
+    }
+
+    /// Delete a volume (e.g. a backup archive). Returns a UPID or null
+    /// depending on storage type.
+    pub async fn delete_volume(
+        &self,
+        node: &str,
+        storage: &str,
+        volid: &str,
+    ) -> Result<Option<String>> {
+        self.delete_req(&format!("/nodes/{node}/storage/{storage}/content/{volid}"))
+            .await
+    }
+
+    /// Scheduled backup jobs, cluster-wide.
+    pub async fn backup_jobs(&self) -> Result<Vec<BackupJob>> {
+        self.get("/cluster/backup").await
+    }
+
+    /// Replication jobs, cluster-wide.
+    pub async fn replication_jobs(&self) -> Result<Vec<ReplicationJob>> {
+        self.get("/cluster/replication").await
     }
 
     pub async fn vncproxy(&self, node: &str, kind: GuestKind, vmid: u32) -> Result<VncProxy> {
