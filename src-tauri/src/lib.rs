@@ -7,6 +7,7 @@ pub mod proxmox;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
             commands::list_connections,
             commands::save_connection,
