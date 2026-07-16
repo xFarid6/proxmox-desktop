@@ -61,6 +61,26 @@ jobs:
       - run: cargo test
       - run: cargo build
 
+  # Informational (not a required check): make sure the Rust side keeps
+  # compiling and testing on the OSes we ship installers for.
+  cross-os:
+    name: cross-os (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    defaults:
+      run:
+        working-directory: src-tauri
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: cargo test
+
   tauri-build:
     name: tauri-build
     runs-on: ubuntu-latest

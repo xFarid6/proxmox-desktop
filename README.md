@@ -2,7 +2,7 @@
 
 Native desktop client for [Proxmox VE](https://www.proxmox.com/en/proxmox-virtual-environment/overview), built with Tauri v2 (Rust) and Vue 3.
 
-> **Status: v1 feature-complete, pre-release.** Tested against a mocked Proxmox API in CI — not yet verified against a live cluster.
+> **Status: v2 feature-complete, pre-release.** Tested against a mocked Proxmox API in CI — not yet verified against a live cluster.
 
 ## Tech stack
 
@@ -21,7 +21,7 @@ pnpm tauri dev
 
 ## Scope
 
-### v1 (in progress)
+### v1 (done)
 
 - Manage multiple Proxmox connections (host + API token, secure storage, self-signed cert opt-in)
 - Cluster/node dashboard: CPU/RAM/disk/network at a glance
@@ -32,9 +32,19 @@ pnpm tauri dev
 - Live task/log panel
 - Read-only network view
 
-### Backlog (not v1)
+### v2 (done)
 
-User/realm/ACL management, firewall, backup/restore + replication, HA, Ceph, certificates, storage pools, network editing, SSH fallback mode, multi-cluster, full-parity create wizard, Windows/macOS packaged releases, notifications.
+- Backup/restore: backup now (vzdump), browse/restore/delete archives, scheduled job + replication views
+- Firewall rules: list/add/delete + enable toggle at cluster/node/guest scope
+- Storage pool management: list definitions, add dir/nfs/cifs, remove
+- Users, realms and ACL management
+- Task-failure alerts (toast + native notification)
+- Create wizard: cloud-init, VLAN, guest agent, unprivileged/nesting, static IP, start-after-create
+- Windows/macOS/Linux installers built on tag push (`v*`), cross-OS tests in CI
+
+### Backlog
+
+HA, Ceph, certificates, network editing, SSH fallback mode, multi-cluster, code signing/auto-updater.
 
 ## Testing
 
