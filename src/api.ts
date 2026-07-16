@@ -86,6 +86,19 @@ export interface BackupJob {
   node?: string;
 }
 
+export interface StorageConfig {
+  storage: string;
+  type: string;
+  content?: string;
+  path?: string;
+  server?: string;
+  export?: string;
+  share?: string;
+  nodes?: string;
+  shared?: number;
+  disable?: number;
+}
+
 export interface FirewallRule {
   pos: number;
   type: string;
@@ -203,6 +216,12 @@ export const api = {
   backupJobs: (connectionId: string) => invoke<BackupJob[]>("backup_jobs", { connectionId }),
   replicationJobs: (connectionId: string) =>
     invoke<ReplicationJob[]>("replication_jobs", { connectionId }),
+  storageConfigs: (connectionId: string) =>
+    invoke<StorageConfig[]>("storage_configs", { connectionId }),
+  addStorage: (connectionId: string, params: Record<string, string>) =>
+    invoke<void>("add_storage", { connectionId, params }),
+  deleteStorage: (connectionId: string, storage: string) =>
+    invoke<void>("delete_storage", { connectionId, storage }),
   firewallRules: (connectionId: string, scope: FirewallScope) =>
     invoke<FirewallRule[]>("firewall_rules", { connectionId, ...scope }),
   addFirewallRule: (connectionId: string, scope: FirewallScope, params: Record<string, string>) =>

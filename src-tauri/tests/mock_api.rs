@@ -387,3 +387,38 @@ async fn firewall_rules_scope_paths_and_crud() {
         .unwrap();
     c.delete_firewall_rule("/cluster", 0).await.unwrap();
 }
+
+#[tokio::test]
+async fn storage_configs_crud() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api2/json/storage"))
+        .respond_with(json(
+            r#"{"data":[{"storage":"local","type":"dir","path":"/var/lib/vz","content":"iso,backup"},{"storage":"nas","type":"nfs","server":"10.0.0.5","export":"/srv/nfs","shared":1}]}"#,
+        ))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api2/json/storage"))
+        .and(body_string_contains("type=nfs"))
+        .respond_with(json(r#"{"data":{"storage":"nas2","type":"nfs"}}"#))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path("/api2/json/storage/nas"))
+        .respond_with(json(r#"{"data":null}"#))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let c = client(&server).await;
+    let cfgs = c.storage_configs().await.unwrap();
+    assert_eq!(cfgs[1].server.as_deref(), Some("10.0.0.5"));
+
+    let mut params = HashMap::new();
+    params.insert("storage".to_string(), "nas2".to_string());
+    params.insert("type".to_string(), "nfs".to_string());
+    c.add_storage(&params).await.unwrap();
+    c.delete_storage("nas").await.unwrap();
+}
