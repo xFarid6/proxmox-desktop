@@ -192,9 +192,13 @@ pub async fn open_console(
         let Ok(local) = tokio_tungstenite::accept_async(stream).await else {
             return;
         };
-        let Ok((remote, _)) =
-            tokio_tungstenite::connect_async_tls_with_config(request, None, false, Some(connector))
-                .await
+        // Timeout so a dead route (network switch, tailnet peer offline)
+        // closes the local socket instead of hanging the console forever.
+        let Ok(Ok((remote, _))) = tokio::time::timeout(
+            std::time::Duration::from_secs(15),
+            tokio_tungstenite::connect_async_tls_with_config(request, None, false, Some(connector)),
+        )
+        .await
         else {
             return;
         };
