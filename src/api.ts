@@ -70,6 +70,29 @@ export interface StorageContent {
   content: string;
   format?: string;
   size?: number;
+  vmid?: number;
+  ctime?: number;
+  notes?: string;
+}
+
+export interface BackupJob {
+  id: string;
+  schedule?: string;
+  storage?: string;
+  vmid?: string;
+  all?: number;
+  enabled?: number;
+  mode?: string;
+  node?: string;
+}
+
+export interface ReplicationJob {
+  id: string;
+  type?: string;
+  guest?: number;
+  target?: string;
+  schedule?: string;
+  disable?: number;
 }
 
 export interface NetworkInterface {
@@ -152,6 +175,13 @@ export const api = {
     invoke<TaskStatus>("task_status", { connectionId, node, upid }),
   taskLog: (connectionId: string, node: string, upid: string, start?: number) =>
     invoke<TaskLogLine[]>("task_log", { connectionId, node, upid, start: start ?? null }),
+  vzdump: (connectionId: string, node: string, params: Record<string, string>) =>
+    invoke<string>("vzdump", { connectionId, node, params }),
+  deleteVolume: (connectionId: string, node: string, storage: string, volid: string) =>
+    invoke<string | null>("delete_volume", { connectionId, node, storage, volid }),
+  backupJobs: (connectionId: string) => invoke<BackupJob[]>("backup_jobs", { connectionId }),
+  replicationJobs: (connectionId: string) =>
+    invoke<ReplicationJob[]>("replication_jobs", { connectionId }),
   testConnection: (opts: {
     host: string;
     token?: string;

@@ -141,6 +141,35 @@ pub struct StorageContent {
     pub content: String,
     pub format: Option<String>,
     pub size: Option<u64>,
+    pub vmid: Option<u32>,
+    pub ctime: Option<u64>,
+    pub notes: Option<String>,
+}
+
+/// One scheduled job from `GET /cluster/backup`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackupJob {
+    pub id: String,
+    pub schedule: Option<String>,
+    pub storage: Option<String>,
+    /// Comma-separated vmid list; absent when `all` is set.
+    pub vmid: Option<String>,
+    pub all: Option<u8>,
+    pub enabled: Option<u8>,
+    pub mode: Option<String>,
+    pub node: Option<String>,
+}
+
+/// One job from `GET /cluster/replication`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplicationJob {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub kind: Option<String>,
+    pub guest: Option<u32>,
+    pub target: Option<String>,
+    pub schedule: Option<String>,
+    pub disable: Option<u8>,
 }
 
 /// One entry from `GET /nodes/{node}/storage`.

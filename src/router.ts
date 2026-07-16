@@ -13,6 +13,7 @@ const routes = [
   },
   { path: "/tasks", component: () => import("./views/TasksView.vue") },
   { path: "/network", component: () => import("./views/NetworkView.vue") },
+  { path: "/backups", component: () => import("./views/BackupsView.vue") },
 ];
 
 export default createRouter({

@@ -286,3 +286,67 @@ async fn network_interfaces_decode() {
     assert_eq!(ifaces[0].kind, "bridge");
     assert_eq!(ifaces[0].bridge_ports.as_deref(), Some("eno1"));
 }
+
+#[tokio::test]
+async fn vzdump_posts_params_and_returns_upid() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api2/json/nodes/pve1/vzdump"))
+        .and(body_string_contains("vmid=100"))
+        .and(body_string_contains("storage=local"))
+        .respond_with(json(r#"{"data":"UPID:pve1:0002:vzdump:100:root@pam:"}"#))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let mut params = HashMap::new();
+    params.insert("vmid".to_string(), "100".to_string());
+    params.insert("storage".to_string(), "local".to_string());
+    let upid = client(&server).await.vzdump("pve1", &params).await.unwrap();
+    assert!(upid.contains("vzdump"));
+}
+
+#[tokio::test]
+async fn delete_volume_uses_delete_method() {
+    let server = MockServer::start().await;
+    Mock::given(method("DELETE"))
+        .and(path(
+            "/api2/json/nodes/pve1/storage/local/content/local:backup/vzdump-qemu-100.vma.zst",
+        ))
+        .respond_with(json(r#"{"data":"UPID:pve1:0003:imgdel:root@pam:"}"#))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let upid = client(&server)
+        .await
+        .delete_volume("pve1", "local", "local:backup/vzdump-qemu-100.vma.zst")
+        .await
+        .unwrap();
+    assert!(upid.unwrap().contains("imgdel"));
+}
+
+#[tokio::test]
+async fn backup_and_replication_jobs_decode() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api2/json/cluster/backup"))
+        .respond_with(json(
+            r#"{"data":[{"id":"backup-1","schedule":"sun 03:00","storage":"local","vmid":"100,101","enabled":1,"mode":"snapshot"}]}"#,
+        ))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api2/json/cluster/replication"))
+        .respond_with(json(
+            r#"{"data":[{"id":"100-0","type":"local","guest":100,"target":"pve2","schedule":"*/15"}]}"#,
+        ))
+        .mount(&server)
+        .await;
+
+    let c = client(&server).await;
+    let jobs = c.backup_jobs().await.unwrap();
+    assert_eq!(jobs[0].vmid.as_deref(), Some("100,101"));
+    let reps = c.replication_jobs().await.unwrap();
+    assert_eq!(reps[0].target.as_deref(), Some("pve2"));
+}
