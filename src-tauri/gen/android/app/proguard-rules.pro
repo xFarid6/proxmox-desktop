@@ -19,3 +19,7 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+
+# Tink (via androidx.security:security-crypto) references javax.annotation
+# classes that are compile-only; R8 must not treat them as missing.
+-dontwarn javax.annotation.**
