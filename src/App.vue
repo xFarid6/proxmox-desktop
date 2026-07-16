@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import ToastList from "./components/ToastList.vue";
+import { startTaskAlerts } from "./stores/alerts";
+
+startTaskAlerts();
 
 const nav = [
   { to: "/connections", label: "Connections" },
