@@ -256,6 +256,38 @@ impl Client {
         self.get("/cluster/replication").await
     }
 
+    /// Firewall endpoints share one shape across scopes; `base` is
+    /// "/cluster", "/nodes/{node}" or "/nodes/{node}/{qemu|lxc}/{vmid}".
+    pub async fn firewall_rules(&self, base: &str) -> Result<Vec<FirewallRule>> {
+        self.get(&format!("{base}/firewall/rules")).await
+    }
+
+    pub async fn add_firewall_rule(
+        &self,
+        base: &str,
+        params: &HashMap<String, String>,
+    ) -> Result<serde_json::Value> {
+        self.post(&format!("{base}/firewall/rules"), params).await
+    }
+
+    pub async fn delete_firewall_rule(&self, base: &str, pos: u32) -> Result<serde_json::Value> {
+        self.delete_req(&format!("{base}/firewall/rules/{pos}"))
+            .await
+    }
+
+    /// Raw options map — key set differs per scope (enable, policy_in, ...).
+    pub async fn firewall_options(&self, base: &str) -> Result<serde_json::Value> {
+        self.get(&format!("{base}/firewall/options")).await
+    }
+
+    pub async fn set_firewall_options(
+        &self,
+        base: &str,
+        params: &HashMap<String, String>,
+    ) -> Result<serde_json::Value> {
+        self.put(&format!("{base}/firewall/options"), params).await
+    }
+
     pub async fn vncproxy(&self, node: &str, kind: GuestKind, vmid: u32) -> Result<VncProxy> {
         let mut params = HashMap::new();
         // websocket=1 makes the proxy speak websocket for embedding.

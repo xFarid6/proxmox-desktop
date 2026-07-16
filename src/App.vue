@@ -8,6 +8,7 @@ const nav = [
   { to: "/tasks", label: "Tasks" },
   { to: "/network", label: "Network" },
   { to: "/backups", label: "Backups" },
+  { to: "/firewall", label: "Firewall" },
 ];
 </script>
 

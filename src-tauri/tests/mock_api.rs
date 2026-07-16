@@ -350,3 +350,40 @@ async fn backup_and_replication_jobs_decode() {
     let reps = c.replication_jobs().await.unwrap();
     assert_eq!(reps[0].target.as_deref(), Some("pve2"));
 }
+
+#[tokio::test]
+async fn firewall_rules_scope_paths_and_crud() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api2/json/cluster/firewall/rules"))
+        .respond_with(json(
+            r#"{"data":[{"pos":0,"type":"in","action":"ACCEPT","enable":1,"proto":"tcp","dport":"22","comment":"ssh"}]}"#,
+        ))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api2/json/nodes/pve1/qemu/100/firewall/rules"))
+        .and(body_string_contains("action=DROP"))
+        .respond_with(json(r#"{"data":null}"#))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path("/api2/json/cluster/firewall/rules/0"))
+        .respond_with(json(r#"{"data":null}"#))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let c = client(&server).await;
+    let rules = c.firewall_rules("/cluster").await.unwrap();
+    assert_eq!(rules[0].dport.as_deref(), Some("22"));
+
+    let mut params = HashMap::new();
+    params.insert("type".to_string(), "in".to_string());
+    params.insert("action".to_string(), "DROP".to_string());
+    c.add_firewall_rule("/nodes/pve1/qemu/100", &params)
+        .await
+        .unwrap();
+    c.delete_firewall_rule("/cluster", 0).await.unwrap();
+}
