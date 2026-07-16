@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">"Proxmox Desktop"</string>
+    <string name="main_activity_title">"Proxmox Desktop"</string>
+</resources>

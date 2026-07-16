@@ -240,7 +240,10 @@ watch(activeId, () => {
         {{ error }}
       </p>
 
-      <table v-else-if="backups.length > 0">
+      <table
+        v-else-if="backups.length > 0"
+        v-cards
+      >
         <thead>
           <tr>
             <th>Archive</th>
@@ -289,7 +292,10 @@ watch(activeId, () => {
       </p>
 
       <h2>Scheduled backup jobs</h2>
-      <table v-if="jobs.length > 0">
+      <table
+        v-if="jobs.length > 0"
+        v-cards
+      >
         <thead>
           <tr>
             <th>ID</th>
@@ -319,7 +325,10 @@ watch(activeId, () => {
       </p>
 
       <h2>Replication</h2>
-      <table v-if="replications.length > 0">
+      <table
+        v-if="replications.length > 0"
+        v-cards
+      >
         <thead>
           <tr>
             <th>ID</th>

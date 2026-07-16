@@ -237,7 +237,10 @@ watch(activeId, () => {
         {{ error }}
       </p>
 
-      <table v-else-if="rules.length > 0">
+      <table
+        v-else-if="rules.length > 0"
+        v-cards
+      >
         <thead>
           <tr>
             <th>Pos</th>

@@ -164,7 +164,7 @@ onMounted(refresh);
 
       <section class="card">
         <h2>Config</h2>
-        <table>
+        <table v-cards>
           <tbody>
             <tr
               v-for="[k, v] in configRows"
