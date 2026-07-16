@@ -256,6 +256,37 @@ impl Client {
         self.get("/cluster/replication").await
     }
 
+    pub async fn access_users(&self) -> Result<Vec<AccessUser>> {
+        self.get("/access/users").await
+    }
+
+    /// Create a user (params: userid, password?, comment?, enable?).
+    pub async fn add_user(&self, params: &HashMap<String, String>) -> Result<serde_json::Value> {
+        self.post("/access/users", params).await
+    }
+
+    pub async fn delete_user(&self, userid: &str) -> Result<serde_json::Value> {
+        self.delete_req(&format!("/access/users/{userid}")).await
+    }
+
+    pub async fn access_domains(&self) -> Result<Vec<AccessDomain>> {
+        self.get("/access/domains").await
+    }
+
+    pub async fn access_roles(&self) -> Result<Vec<AccessRole>> {
+        self.get("/access/roles").await
+    }
+
+    pub async fn access_acl(&self) -> Result<Vec<AclEntry>> {
+        self.get("/access/acl").await
+    }
+
+    /// Grant or revoke ACLs (params: path, roles, users|groups|tokens,
+    /// delete=1 to revoke).
+    pub async fn set_acl(&self, params: &HashMap<String, String>) -> Result<serde_json::Value> {
+        self.put("/access/acl", params).await
+    }
+
     /// Cluster-wide storage definitions (storage.cfg).
     pub async fn storage_configs(&self) -> Result<Vec<StorageConfig>> {
         self.get("/storage").await

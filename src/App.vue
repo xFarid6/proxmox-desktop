@@ -10,6 +10,7 @@ const nav = [
   { to: "/backups", label: "Backups" },
   { to: "/firewall", label: "Firewall" },
   { to: "/storage", label: "Storage" },
+  { to: "/access", label: "Access" },
 ];
 </script>
 

@@ -16,6 +16,7 @@ const routes = [
   { path: "/backups", component: () => import("./views/BackupsView.vue") },
   { path: "/firewall", component: () => import("./views/FirewallView.vue") },
   { path: "/storage", component: () => import("./views/StorageView.vue") },
+  { path: "/access", component: () => import("./views/AccessView.vue") },
 ];
 
 export default createRouter({

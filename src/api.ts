@@ -86,6 +86,35 @@ export interface BackupJob {
   node?: string;
 }
 
+export interface AccessUser {
+  userid: string;
+  comment?: string;
+  enable?: number;
+  expire?: number;
+  email?: string;
+}
+
+export interface AccessDomain {
+  realm: string;
+  type?: string;
+  comment?: string;
+  default?: number;
+}
+
+export interface AclEntry {
+  path: string;
+  type: string;
+  ugid: string;
+  roleid: string;
+  propagate?: number;
+}
+
+export interface AccessRole {
+  roleid: string;
+  privs?: string;
+  special?: number;
+}
+
 export interface StorageConfig {
   storage: string;
   type: string;
@@ -216,6 +245,17 @@ export const api = {
   backupJobs: (connectionId: string) => invoke<BackupJob[]>("backup_jobs", { connectionId }),
   replicationJobs: (connectionId: string) =>
     invoke<ReplicationJob[]>("replication_jobs", { connectionId }),
+  accessUsers: (connectionId: string) => invoke<AccessUser[]>("access_users", { connectionId }),
+  addUser: (connectionId: string, params: Record<string, string>) =>
+    invoke<void>("add_user", { connectionId, params }),
+  deleteUser: (connectionId: string, userid: string) =>
+    invoke<void>("delete_user", { connectionId, userid }),
+  accessDomains: (connectionId: string) =>
+    invoke<AccessDomain[]>("access_domains", { connectionId }),
+  accessRoles: (connectionId: string) => invoke<AccessRole[]>("access_roles", { connectionId }),
+  accessAcl: (connectionId: string) => invoke<AclEntry[]>("access_acl", { connectionId }),
+  setAcl: (connectionId: string, params: Record<string, string>) =>
+    invoke<void>("set_acl", { connectionId, params }),
   storageConfigs: (connectionId: string) =>
     invoke<StorageConfig[]>("storage_configs", { connectionId }),
   addStorage: (connectionId: string, params: Record<string, string>) =>
