@@ -35,3 +35,12 @@ directly feeds hopline's v0.1 (console/terminal fixes). pxx-dex v1 + Pro (€15)
 is scheduled for November per `04-six-month-roadmap.md`; the shared-crate
 extraction (issue #14 pattern across the suite) happens in September. If an
 agent is pointed here by mistake, redirect effort to hopline.
+
+## Status (paused 2026-07-18)
+
+android-v1 (v0.2.0) shipped 2026-07-16: full Android port, 8 issues (#46–#53),
+8 PRs merged, milestone closed, release-signing secrets live in repo secrets.
+v0.3 (milestone `v3`, issues #18/#19/#20/#22/#23/#24) is scoped with detailed
+bodies but **not started** — respect the freeze above before picking it up.
+Full resume note: Obsidian vault →
+`Claude-understandings/proxmox-desktop-status.md`.
