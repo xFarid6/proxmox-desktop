@@ -14,6 +14,13 @@ export default defineConfig(async () => ({
     target: "es2022",
   },
 
+  // `build.target` only covers the production rollup pass; the dev dep-optimizer
+  // pre-bundles with esbuild and needs the same target or `vite dev` fails on
+  // noVNC's top-level await.
+  optimizeDeps: {
+    esbuildOptions: { target: "es2022" },
+  },
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent Vite from obscuring rust errors
