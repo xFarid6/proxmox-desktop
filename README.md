@@ -2,7 +2,7 @@
 
 Native desktop client for [Proxmox VE](https://www.proxmox.com/en/proxmox-virtual-environment/overview), built with Tauri v2 (Rust) and Vue 3. One codebase, two targets: desktop and Android (scaffold at `src-tauri/gen/android/`).
 
-> **Status: v1, v2, and android-v1 shipped — v0.2.0 tagged.** 7 desktop installers (Windows NSIS+MSI, macOS, Linux AppImage/deb/rpm) plus a signed Android APK/AAB pipeline. Tested against a mocked Proxmox API in CI — not yet verified against a live cluster.
+> **Status: v1, v2, and android-v1 shipped — [v0.2.0 released](https://github.com/xFarid6/proxmox-desktop/releases/tag/v0.2.0).** 7 desktop installers (Windows NSIS+MSI, macOS, Linux AppImage/deb/rpm) plus a signed Android APK/AAB pipeline. Tested against a mocked Proxmox API in CI — not yet verified against a live cluster.
 
 ## Tech stack
 
@@ -69,9 +69,9 @@ pnpm tauri dev
 
 ## Sibling tools
 
-hopline (SSH/terminal manager), dockshell (Docker GUI), and pgcove (Postgres/Supabase client) are standalone products generalized out of this repo's connection-manager and console code — not forks, not sub-projects.
+[hopline](https://github.com/xFarid6/hopline) (SSH/terminal manager), [dockshell](https://github.com/xFarid6/dockshell) (Docker GUI), and [pgcove](https://github.com/xFarid6/pgcove) (Postgres/Supabase client) are standalone products generalized out of this repo's connection-manager and console code — not forks, not sub-projects.
 
-What flows back the other way: the shared `conn-manager-rs` crate (all four use it), hopline's russh SSH work (#23 above), and dockshell's Docker management (#65 above).
+What flows back the other way: the shared [`conn-manager-rs`](https://github.com/xFarid6/conn-manager-rs) crate (the other three already use it; this repo adopts it in #64), hopline's russh SSH work (#23), and dockshell's Docker management (#65).
 
 ## Testing
 
