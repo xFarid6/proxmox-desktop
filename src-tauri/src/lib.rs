@@ -3,7 +3,10 @@ mod android_keystore;
 pub mod commands;
 pub mod connections;
 pub mod console;
+pub mod known_hosts;
 pub mod proxmox;
+pub mod ssh;
+pub mod ssh_console;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -13,6 +16,7 @@ pub fn run() {
     #[cfg(target_os = "android")]
     let builder = builder.plugin(android_keystore::init());
     builder
+        .manage(ssh::SshSessions::default())
         .invoke_handler(tauri::generate_handler![
             commands::list_connections,
             commands::save_connection,
@@ -50,6 +54,7 @@ pub fn run() {
             commands::access_acl,
             commands::set_acl,
             console::open_console,
+            ssh_console::open_ssh_shell,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
