@@ -5,6 +5,9 @@ description = "Native desktop client for Proxmox VE"
 authors = ["xFarid6"]
 license = "FSL-1.1-MIT"
 edition = "2021"
+# The `pxx` bin below makes this a two-binary crate, and `tauri build` then
+# cannot tell which one is the app ("failed to find main binary").
+default-run = "proxmox-desktop"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -14,6 +17,10 @@ edition = "2021"
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
 name = "proxmox_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "pxx"
+path = "src/bin/pxx.rs"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
