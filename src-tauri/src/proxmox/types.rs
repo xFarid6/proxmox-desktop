@@ -298,6 +298,62 @@ pub struct HaStatus {
     pub timestamp: Option<u64>,
 }
 
+/// One entry from `GET /nodes/{node}/ceph/pool`. `pool` is the numeric id,
+/// `pool_name` the name every other endpoint addresses the pool by.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CephPool {
+    pub pool: Option<u32>,
+    pub pool_name: String,
+    pub size: Option<u32>,
+    pub min_size: Option<u32>,
+    pub pg_num: Option<u32>,
+    /// The rule's numeric id on older PVE, its name on newer — as-is.
+    pub crush_rule: Option<serde_json::Value>,
+    pub crush_rule_name: Option<String>,
+    pub percent_used: Option<f64>,
+    pub bytes_used: Option<u64>,
+    pub pg_autoscale_mode: Option<String>,
+    #[serde(rename = "type")]
+    pub kind: Option<String>,
+}
+
+/// Which Ceph daemon listing to fetch: `/nodes/{node}/ceph/{mon|mgr|mds}`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CephServiceKind {
+    Mon,
+    Mgr,
+    Mds,
+}
+
+impl CephServiceKind {
+    pub fn as_path(&self) -> &'static str {
+        match self {
+            CephServiceKind::Mon => "mon",
+            CephServiceKind::Mgr => "mgr",
+            CephServiceKind::Mds => "mds",
+        }
+    }
+}
+
+/// Start/stop of a Ceph daemon. Not `PowerAction` — Ceph has no reboot or
+/// shutdown, and those paths would 501.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CephDaemonAction {
+    Start,
+    Stop,
+}
+
+impl CephDaemonAction {
+    pub fn as_path(&self) -> &'static str {
+        match self {
+            CephDaemonAction::Start => "start",
+            CephDaemonAction::Stop => "stop",
+        }
+    }
+}
+
 /// `POST /nodes/{node}/{qemu|lxc}/{vmid}/vncproxy` response.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VncProxy {

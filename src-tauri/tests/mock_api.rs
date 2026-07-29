@@ -4,7 +4,9 @@
 
 use std::collections::HashMap;
 
-use proxmox_desktop_lib::proxmox::types::{GuestKind, PowerAction};
+use proxmox_desktop_lib::proxmox::types::{
+    CephDaemonAction, CephServiceKind, GuestKind, PowerAction,
+};
 use proxmox_desktop_lib::proxmox::{Client, Error};
 use wiremock::matchers::{body_string_contains, header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -543,6 +545,170 @@ async fn ha_status_current_decodes_heterogeneous_entries() {
     assert_eq!(st[0].quorate.as_ref().unwrap(), "1");
     assert_eq!(st[1].node.as_deref(), Some("pve1"));
     assert_eq!(st[3].crm_state.as_deref(), Some("started"));
+}
+
+#[tokio::test]
+async fn ceph_status_osds_and_services_decode() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api2/json/nodes/pve1/ceph/status"))
+        .respond_with(json(
+            r#"{"data":{"health":{"status":"HEALTH_WARN"},"quorum_names":["pve1","pve2"],
+                "pgmap":{"num_pgs":129,"bytes_total":1000,"bytes_used":400,
+                "pgs_by_state":[{"state_name":"active+clean","count":128}]}}}"#,
+        ))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api2/json/nodes/pve1/ceph/osd"))
+        .respond_with(json(
+            r#"{"data":{"root":{"name":"default","type":"root","children":[
+                {"name":"pve1","type":"host","children":[
+                    {"id":0,"name":"osd.0","type":"osd","status":"up","in":1,"device_class":"ssd"}]}]}}}"#,
+        ))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api2/json/nodes/pve1/ceph/mon"))
+        .respond_with(json(
+            r#"{"data":[{"name":"pve1","quorum":1,"host":"pve1"}]}"#,
+        ))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let c = client(&server).await;
+    let st = c.ceph_status("pve1").await.unwrap();
+    assert_eq!(st["health"]["status"], "HEALTH_WARN");
+    assert_eq!(st["pgmap"]["pgs_by_state"][0]["count"], 128);
+
+    let tree = c.ceph_osds("pve1").await.unwrap();
+    assert_eq!(tree["root"]["children"][0]["children"][0]["name"], "osd.0");
+
+    let mons = c.ceph_services("pve1", CephServiceKind::Mon).await.unwrap();
+    assert_eq!(mons[0]["quorum"], 1);
+}
+
+/// A node without Ceph answers `/ceph/status` with an error, which is exactly
+/// what the frontend's Ceph probe keys off.
+#[tokio::test]
+async fn ceph_status_errors_on_a_node_without_ceph() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api2/json/nodes/pve1/ceph/status"))
+        .respond_with(ResponseTemplate::new(500).set_body_string("rados_connect failed"))
+        .mount(&server)
+        .await;
+
+    let err = client(&server).await.ceph_status("pve1").await.unwrap_err();
+    match err {
+        Error::Api { status, .. } => assert_eq!(status, 500),
+        other => panic!("expected api error, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn ceph_osd_ops_hit_the_right_paths() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api2/json/nodes/pve1/ceph/osd/3/out"))
+        .respond_with(json(r#"{"data":null}"#))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api2/json/nodes/pve1/ceph/osd/3/in"))
+        .respond_with(json(r#"{"data":null}"#))
+        .expect(1)
+        .mount(&server)
+        .await;
+    // Start/stop go through the node-wide endpoint with service=osd.N.
+    Mock::given(method("POST"))
+        .and(path("/api2/json/nodes/pve1/ceph/stop"))
+        .and(body_string_contains("service=osd.3"))
+        .respond_with(json(r#"{"data":"UPID:pve1:stop"}"#))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path("/api2/json/nodes/pve1/ceph/osd/3"))
+        .and(query_param("cleanup", "1"))
+        .respond_with(json(r#"{"data":"UPID:pve1:destroyosd"}"#))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let c = client(&server).await;
+    c.ceph_osd_out("pve1", 3).await.unwrap();
+    c.ceph_osd_in("pve1", 3).await.unwrap();
+    assert_eq!(
+        c.ceph_osd_power("pve1", 3, CephDaemonAction::Stop)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("UPID:pve1:stop")
+    );
+    assert_eq!(
+        c.ceph_osd_destroy("pve1", 3, true)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("UPID:pve1:destroyosd")
+    );
+}
+
+#[tokio::test]
+async fn ceph_pools_crud() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api2/json/nodes/pve1/ceph/pool"))
+        .respond_with(json(
+            r#"{"data":[{"pool":2,"pool_name":"vmdata","size":3,"min_size":2,"pg_num":128,
+                "crush_rule":0,"crush_rule_name":"replicated_rule","percent_used":0.12,
+                "bytes_used":123456789,"type":"replicated"}]}"#,
+        ))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api2/json/nodes/pve1/ceph/pool"))
+        .and(body_string_contains("name=fast"))
+        .and(body_string_contains("min_size=2"))
+        .respond_with(json(r#"{"data":"UPID:pve1:createpool"}"#))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("PUT"))
+        .and(path("/api2/json/nodes/pve1/ceph/pool/vmdata"))
+        .and(body_string_contains("size=2"))
+        .respond_with(json(r#"{"data":null}"#))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path("/api2/json/nodes/pve1/ceph/pool/vmdata"))
+        .and(query_param("remove_storages", "1"))
+        .respond_with(json(r#"{"data":"UPID:pve1:destroypool"}"#))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let c = client(&server).await;
+    let pools = c.ceph_pools("pve1").await.unwrap();
+    assert_eq!(pools[0].pool_name, "vmdata");
+    assert_eq!(pools[0].min_size, Some(2));
+    assert_eq!(pools[0].crush_rule_name.as_deref(), Some("replicated_rule"));
+    assert_eq!(pools[0].percent_used, Some(0.12));
+
+    let mut params = HashMap::new();
+    params.insert("name".to_string(), "fast".to_string());
+    params.insert("size".to_string(), "3".to_string());
+    params.insert("min_size".to_string(), "2".to_string());
+    c.ceph_pool_create("pve1", &params).await.unwrap();
+
+    let mut params = HashMap::new();
+    params.insert("size".to_string(), "2".to_string());
+    c.ceph_pool_update("pve1", "vmdata", &params).await.unwrap();
+    c.ceph_pool_delete("pve1", "vmdata", true).await.unwrap();
 }
 
 #[tokio::test]
