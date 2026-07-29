@@ -18,6 +18,7 @@ const routes = [
   { path: "/firewall", component: () => import("./views/FirewallView.vue") },
   { path: "/storage", component: () => import("./views/StorageView.vue") },
   { path: "/ceph", component: () => import("./views/CephView.vue") },
+  { path: "/certificates", component: () => import("./views/CertificatesView.vue") },
   { path: "/access", component: () => import("./views/AccessView.vue") },
   { path: "/ha", component: () => import("./views/HaView.vue") },
 ];

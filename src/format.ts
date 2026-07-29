@@ -20,6 +20,12 @@ export function formatUptime(s?: number): string {
   return `${m}m`;
 }
 
+/** Unix epoch seconds -> local date and time. Every PVE timestamp is in
+ * seconds; Date wants milliseconds. */
+export function formatTimestamp(ts?: number): string {
+  return ts == null ? "—" : new Date(ts * 1000).toLocaleString();
+}
+
 export function percent(used?: number, max?: number): number {
   if (used == null || !max) return 0;
   return Math.round((used / max) * 100);

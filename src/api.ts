@@ -298,6 +298,49 @@ export interface CephService {
   ceph_version_short?: string;
 }
 
+/** One entry from `/nodes/{node}/certificates/info`. Every field is optional
+ * in the PVE schema, so a row degrades rather than the listing failing.
+ * `filename` is `pve-ssl.pem` for the node's self-signed certificate and
+ * `pveproxy-ssl.pem` for a custom or ACME one. */
+export interface CertificateInfo {
+  filename?: string;
+  fingerprint?: string;
+  subject?: string;
+  issuer?: string;
+  /** Unix epoch seconds. */
+  notbefore?: number;
+  notafter?: number;
+  san?: string[];
+  /** The certificate in PEM. The private key is never returned. */
+  pem?: string;
+  public_key_type?: string;
+  public_key_bits?: number;
+}
+
+/** `/cluster/acme/account` — names only. */
+export interface AcmeAccountEntry {
+  name: string;
+}
+
+/** `/cluster/acme/account/{name}`. `account` is whatever the ACME server
+ * returned at registration, so only the fields the UI shows are declared. */
+export interface AcmeAccountDetail {
+  directory?: string;
+  location?: string;
+  tos?: string;
+  account?: { status?: string; contact?: string[]; createdAt?: string };
+}
+
+/** One entry from `/cluster/acme/plugins`, listed read-only — plugin
+ * configuration is out of scope for #20. Fields beyond these depend on the
+ * DNS API behind the plugin. */
+export interface AcmePlugin {
+  plugin: string;
+  type?: string;
+  api?: string;
+  "validation-delay"?: number;
+}
+
 export interface ConsoleInfo {
   port: number;
   ticket: string;
@@ -449,6 +492,25 @@ export const api = {
   ) => invoke<string | null>("ceph_pool_update", { connectionId, node, name, params }),
   cephPoolDelete: (connectionId: string, node: string, name: string, removeStorages: boolean) =>
     invoke<string | null>("ceph_pool_delete", { connectionId, node, name, removeStorages }),
+  certificatesInfo: (connectionId: string, node: string) =>
+    invoke<CertificateInfo[]>("certificates_info", { connectionId, node }),
+  /** `params`: certificates (PEM chain), key (PEM private key), force, restart.
+   * The key never comes back and must not be logged on the way in. */
+  uploadCertificate: (connectionId: string, node: string, params: Record<string, string>) =>
+    invoke<CertificateInfo>("upload_certificate", { connectionId, node, params }),
+  deleteCustomCertificate: (connectionId: string, node: string, restart: boolean) =>
+    invoke<string | null>("delete_custom_certificate", { connectionId, node, restart }),
+  /** Both ACME calls return a task UPID — the certificate is only in place
+   * once that task finishes. */
+  acmeOrderCertificate: (connectionId: string, node: string) =>
+    invoke<string>("acme_order_certificate", { connectionId, node }),
+  acmeRenewCertificate: (connectionId: string, node: string, force: boolean) =>
+    invoke<string>("acme_renew_certificate", { connectionId, node, force }),
+  acmeAccounts: (connectionId: string) =>
+    invoke<AcmeAccountEntry[]>("acme_accounts", { connectionId }),
+  acmeAccount: (connectionId: string, name: string) =>
+    invoke<AcmeAccountDetail>("acme_account", { connectionId, name }),
+  acmePlugins: (connectionId: string) => invoke<AcmePlugin[]>("acme_plugins", { connectionId }),
   storageConfigs: (connectionId: string) =>
     invoke<StorageConfig[]>("storage_configs", { connectionId }),
   addStorage: (connectionId: string, params: Record<string, string>) =>

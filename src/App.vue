@@ -52,6 +52,7 @@ const nav = computed(() => [
   { to: "/firewall", label: "Firewall" },
   { to: "/storage", label: "Storage" },
   ...(cephAvailable.value ? [{ to: "/ceph", label: "Ceph" }] : []),
+  { to: "/certificates", label: "Certificates" },
   { to: "/access", label: "Access" },
   { to: "/ha", label: "HA" },
 ]);
