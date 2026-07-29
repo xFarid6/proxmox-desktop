@@ -27,6 +27,20 @@ export interface Version {
 export type GuestKind = "qemu" | "lxc";
 export type PowerAction = "start" | "stop" | "reboot" | "shutdown";
 
+/** A Docker container running *inside* a guest, as its `docker ps` reported
+ * it. `state` is the machine-readable one ("running", "exited"); `status` is
+ * the human one ("Up 3 hours"). */
+export interface DockerContainer {
+  id: string;
+  name: string;
+  image: string;
+  state: string;
+  status: string;
+  ports: string;
+}
+
+export type DockerAction = "start" | "stop" | "restart";
+
 export interface ClusterResource {
   id: string;
   type: "node" | "qemu" | "lxc" | "storage";
@@ -231,6 +245,25 @@ export const api = {
     kind: GuestKind,
     params: Record<string, string>,
   ) => invoke<string>("create_guest", { connectionId, node, kind, params }),
+  /** Containers inside a guest. `null` means the guest is reachable but has
+   * no `docker` — hide the section rather than showing an error. Needs the
+   * connection's SSH config, plus qemu-guest-agent for a VM. */
+  dockerPs: (connectionId: string, kind: GuestKind, vmid: number) =>
+    invoke<DockerContainer[] | null>("docker_ps", { connectionId, kind, vmid }),
+  dockerAction: (
+    connectionId: string,
+    kind: GuestKind,
+    vmid: number,
+    container: string,
+    action: DockerAction,
+  ) => invoke<void>("docker_action", { connectionId, kind, vmid, container, action }),
+  dockerLogs: (
+    connectionId: string,
+    kind: GuestKind,
+    vmid: number,
+    container: string,
+    tail: number,
+  ) => invoke<string>("docker_logs", { connectionId, kind, vmid, container, tail }),
   guestConfig: (connectionId: string, node: string, kind: GuestKind, vmid: number) =>
     invoke<Record<string, unknown>>("guest_config", { connectionId, node, kind, vmid }),
   setGuestConfig: (
