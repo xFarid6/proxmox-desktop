@@ -9,29 +9,30 @@ Native Proxmox VE client. Tauri v2 + Vue 3 + TS + Rust. One codebase, two
 targets: desktop + Android (scaffold `src-tauri/gen/android/`). The original of
 the four-sibling suite. **Public, dual MIT/Apache-2.0.**
 
-## Licensing — read before porting any sibling code
+## Licensing — copying between the suite is the plan
 
 | Repo | Visibility | License |
 |---|---|---|
-| proxmox-desktop (this) | public | MIT OR Apache-2.0 |
-| conn-manager-rs | public | MIT OR Apache-2.0 (relicensed 2026-07-29 to unblock #64) |
-| hopline | **private** | FSL-1.1-MIT |
+| proxmox-desktop (this) | public | FSL-1.1-MIT (relicensed 2026-07-29) |
+| hopline | private | FSL-1.1-MIT |
 | dockshell | public | FSL-1.1-MIT |
 | pgcove | public | FSL-1.1-MIT |
+| conn-manager-rs | public | MIT OR Apache-2.0 |
 
-**Do not copy code from hopline, dockshell or pgcove into this repo.** You own
-the copyright, so it is not a legal violation — it is a business one. hopline is
-the private, paid product; moving its core into a public permissive repo
-publishes the moat for free.
+Same owner, same licence across all four apps. **Copy freely between them** —
+building the small tools first so their hardened code could come back here was
+the deliberate strategy, not an accident. When an issue says "port hopline's SSH
+work", it means port it: take the code.
 
-Reading a sibling to understand a *design* is fine and encouraged. Copying its
-*text* is not. When an issue says "port hopline's SSH work", it means:
-re-implement the security design (TOFU host-key verification, auth ladder,
-connect timeout) as fresh MIT/Apache code here. Not copy-paste — and that
-includes small files like `known_hosts.rs`.
+conn-manager-rs is permissive on purpose (a permissive shared library inside FSL
+apps is a standard, fine pattern). Depend on it freely.
 
-conn-manager-rs is the one exception, and only because it was relicensed to
-match this repo. Depend on it freely.
+This repo was MIT/Apache-2.0 until 2026-07-29; **releases up to and including
+v0.2.0 stay MIT/Apache forever** — already published, can't be withdrawn, and
+that is fine. Everything from here is FSL. Don't "fix" the old release notes.
+
+Adding a genuinely third-party dependency still needs its licence checked
+normally — this rule is about the four sibling repos only.
 
 ## State
 
@@ -41,7 +42,8 @@ repo secrets. Two open milestones:
 
 **v4-integration** (runs first)
 - #64 adopt conn-manager crate
-- #23 SSH mode — fresh implementation, hopline as design reference only
+- #23 SSH mode — port hopline's `ssh.rs` + `known_hosts.rs`, trimmed to the
+  subset this app needs (connect, auth, host-key check, one PTY shell channel)
 - #65 Docker inside a guest — `docker` CLI over the #23 channel, not a bollard port
 - #66 live-cluster + real-device validation
 

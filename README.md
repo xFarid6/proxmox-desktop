@@ -69,9 +69,19 @@ pnpm tauri dev
 
 ## Sibling tools
 
-[hopline](https://github.com/xFarid6/hopline) (SSH/terminal manager), [dockshell](https://github.com/xFarid6/dockshell) (Docker GUI), and [pgcove](https://github.com/xFarid6/pgcove) (Postgres/Supabase client) are standalone products generalized out of this repo's connection-manager and console code — not forks, not sub-projects.
+[hopline](https://github.com/xFarid6/hopline) (SSH/terminal manager),
+[dockshell](https://github.com/xFarid6/dockshell) (Docker GUI) and
+[pgcove](https://github.com/xFarid6/pgcove) (Postgres/Supabase client) share
+this repo's architecture and licence. They started as this app's
+connection-manager and console code generalized into standalone tools; each one
+hardened a piece in isolation, and those pieces come back here:
 
-What flows back the other way: the shared [`conn-manager-rs`](https://github.com/xFarid6/conn-manager-rs) crate (the other three already use it; this repo adopts it in #64), hopline's russh SSH work (#23), and dockshell's Docker management (#65).
+- [`conn-manager-rs`](https://github.com/xFarid6/conn-manager-rs) — shared
+  profile store + OS keyring, used by all four (this repo adopts it in #64)
+- hopline's russh SSH client → SSH mode (#23)
+- dockshell's Docker management → Docker inside a guest (#65)
+
+Same owner, same licence, so code moves between them freely.
 
 ## Testing
 
@@ -79,4 +89,11 @@ CI runs against a **mocked Proxmox API** (fixture HTTP server) — there is no l
 
 ## License
 
-Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.
+[Functional Source License, Version 1.1, MIT Future License](LICENSE)
+(FSL-1.1-MIT) — the same license as its siblings. Source-available: read, use,
+modify and redistribute freely; you just can't sell a competing product with it.
+Each version becomes plain MIT two years after release. Plain-language summary
+in [LICENSING.md](LICENSING.md).
+
+Releases up to and including v0.2.0 were published under MIT/Apache-2.0 and stay
+that way.
