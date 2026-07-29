@@ -18,6 +18,7 @@ const routes = [
   { path: "/firewall", component: () => import("./views/FirewallView.vue") },
   { path: "/storage", component: () => import("./views/StorageView.vue") },
   { path: "/access", component: () => import("./views/AccessView.vue") },
+  { path: "/ha", component: () => import("./views/HaView.vue") },
 ];
 
 export default createRouter({

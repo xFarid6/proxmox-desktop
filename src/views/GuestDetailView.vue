@@ -1,7 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
-import { api, type DockerAction, type DockerContainer, type GuestKind } from "../api";
+import {
+  api,
+  type DockerAction,
+  type DockerContainer,
+  type GuestKind,
+  type HaResource,
+} from "../api";
+import { guestSid } from "../ha";
 import { activeId } from "../stores/connections";
 import { toast } from "../stores/toast";
 
@@ -46,6 +53,43 @@ const logs = ref("");
 
 const LOG_TAIL = 200;
 
+// HA membership (#18). `haAvailable` gates the button: a cluster whose
+// ha-manager refuses the call gets no HA control at all, not a broken one.
+const sid = guestSid(kind, vmid);
+const ha = ref<HaResource | null>(null);
+const haAvailable = ref(false);
+const haBusy = ref(false);
+
+async function loadHa() {
+  if (!activeId.value) return;
+  try {
+    const list = await api.haResources(activeId.value);
+    ha.value = list.find((r) => r.sid === sid) ?? null;
+    haAvailable.value = true;
+  } catch {
+    haAvailable.value = false;
+  }
+}
+
+async function toggleHa() {
+  if (!activeId.value) return;
+  haBusy.value = true;
+  try {
+    if (ha.value) {
+      await api.deleteHaResource(activeId.value, sid);
+      toast(`${sid} removed from HA`);
+    } else {
+      await api.addHaResource(activeId.value, { sid, state: "started" });
+      toast(`${sid} added to HA`);
+    }
+    await loadHa();
+  } catch (e) {
+    toast(String(e), "error");
+  } finally {
+    haBusy.value = false;
+  }
+}
+
 async function refresh() {
   if (!activeId.value) return;
   loading.value = true;
@@ -60,7 +104,7 @@ async function refresh() {
   } finally {
     loading.value = false;
   }
-  await loadDocker();
+  await Promise.all([loadDocker(), loadHa()]);
 }
 
 /** Lists containers, and doubles as the "does this guest run Docker?" probe.
@@ -144,6 +188,17 @@ onMounted(refresh);
   <div>
     <div class="head">
       <h1>{{ kind === "qemu" ? "VM" : "CT" }} {{ vmid }} <small>on {{ node }}</small></h1>
+      <span
+        v-if="ha"
+        class="ha-badge"
+      >HA {{ ha.state ?? "started" }}</span>
+      <button
+        v-if="haAvailable"
+        :disabled="haBusy"
+        @click="toggleHa"
+      >
+        {{ ha ? "Remove from HA" : "Add to HA" }}
+      </button>
       <router-link :to="`/guests/${node}/${kind}/${vmid}/console`">
         Console
       </router-link>
@@ -320,6 +375,14 @@ onMounted(refresh);
 .head small {
   font-weight: normal;
   opacity: 0.6;
+}
+
+.ha-badge {
+  font-size: 0.8em;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: #2a72;
+  color: #2a7;
 }
 
 .cols {

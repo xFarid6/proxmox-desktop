@@ -44,6 +44,7 @@ const nav = [
   { to: "/firewall", label: "Firewall" },
   { to: "/storage", label: "Storage" },
   { to: "/access", label: "Access" },
+  { to: "/ha", label: "HA" },
 ];
 </script>
 

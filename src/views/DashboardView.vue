@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted } from "vue";
+import { computed, onMounted, ref } from "vue";
 import UsageBar from "../components/UsageBar.vue";
+import { api, type HaStatus } from "../api";
 import { formatBytes, formatUptime, percent } from "../format";
 import { activeId } from "../stores/connections";
 import { error, guests, loading, nodes, refreshCluster } from "../stores/cluster";
@@ -19,12 +20,44 @@ const netByNode = computed(() => {
   return m;
 });
 
-onMounted(refreshCluster);
+// HA summary (#18). A cluster without HA answers empty or errors outright —
+// both mean "no HA here", so the card simply does not render.
+const ha = ref<HaStatus[]>([]);
+const quorum = computed(() => ha.value.find((e) => e.type === "quorum"));
+const master = computed(() => ha.value.find((e) => e.type === "master"));
+const services = computed(() => ha.value.filter((e) => e.type === "service"));
+
+async function loadHa() {
+  if (!activeId.value) return;
+  try {
+    ha.value = await api.haStatusCurrent(activeId.value);
+  } catch {
+    ha.value = [];
+  }
+}
+
+onMounted(() => {
+  void refreshCluster();
+  void loadHa();
+});
 </script>
 
 <template>
   <div>
     <h1>Dashboard</h1>
+
+    <router-link
+      v-if="ha.length > 0"
+      to="/ha"
+      class="ha-line"
+    >
+      <strong>HA</strong>
+      <span :class="Number(quorum?.quorate) === 1 ? 'ok' : 'bad'">
+        quorum {{ Number(quorum?.quorate) === 1 ? "OK" : "lost" }}
+      </span>
+      <span>master {{ master?.node ?? "none" }}</span>
+      <span>{{ services.length }} service{{ services.length === 1 ? "" : "s" }}</span>
+    </router-link>
 
     <p v-if="!activeId">
       No active connection. Add one under Connections.
@@ -134,6 +167,25 @@ onMounted(refreshCluster);
   gap: 12px;
   font-size: 0.8em;
   opacity: 0.7;
+}
+
+.ha-line {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  margin-bottom: 16px;
+  padding: 8px 14px;
+  border: 1px solid #ccc3;
+  border-radius: 8px;
+  font-size: 0.85em;
+}
+
+.ok {
+  color: #2a7;
+}
+
+.bad {
+  color: #c33;
 }
 
 .error {

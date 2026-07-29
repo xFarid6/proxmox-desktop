@@ -197,6 +197,39 @@ export interface NetworkInterface {
   autostart?: number;
 }
 
+/** A guest under HA. `sid` is the HA service id, "qemu:100" / "lxc:101". */
+export interface HaResource {
+  sid: string;
+  type?: string;
+  state?: string;
+  group?: string;
+  comment?: string;
+  max_restart?: number;
+  max_relocate?: number;
+}
+
+export interface HaGroup {
+  group: string;
+  type?: string;
+  /** Comma-separated `node[:priority]` list, e.g. "pve1:2,pve2". */
+  nodes?: string;
+  restricted?: number;
+  nofailback?: number;
+  comment?: string;
+}
+
+/** One entry of `/cluster/ha/status/current`. The list is heterogeneous —
+ * `type` decides which fields the entry actually carries. */
+export interface HaStatus {
+  id: string;
+  type?: string;
+  status?: string;
+  node?: string;
+  quorate?: string | number;
+  crm_state?: string;
+  timestamp?: number;
+}
+
 export interface ConsoleInfo {
   port: number;
   ticket: string;
@@ -307,6 +340,22 @@ export const api = {
   accessAcl: (connectionId: string) => invoke<AclEntry[]>("access_acl", { connectionId }),
   setAcl: (connectionId: string, params: Record<string, string>) =>
     invoke<void>("set_acl", { connectionId, params }),
+  haResources: (connectionId: string) => invoke<HaResource[]>("ha_resources", { connectionId }),
+  addHaResource: (connectionId: string, params: Record<string, string>) =>
+    invoke<void>("add_ha_resource", { connectionId, params }),
+  updateHaResource: (connectionId: string, sid: string, params: Record<string, string>) =>
+    invoke<void>("update_ha_resource", { connectionId, sid, params }),
+  deleteHaResource: (connectionId: string, sid: string) =>
+    invoke<void>("delete_ha_resource", { connectionId, sid }),
+  haGroups: (connectionId: string) => invoke<HaGroup[]>("ha_groups", { connectionId }),
+  addHaGroup: (connectionId: string, params: Record<string, string>) =>
+    invoke<void>("add_ha_group", { connectionId, params }),
+  updateHaGroup: (connectionId: string, group: string, params: Record<string, string>) =>
+    invoke<void>("update_ha_group", { connectionId, group, params }),
+  deleteHaGroup: (connectionId: string, group: string) =>
+    invoke<void>("delete_ha_group", { connectionId, group }),
+  haStatusCurrent: (connectionId: string) =>
+    invoke<HaStatus[]>("ha_status_current", { connectionId }),
   storageConfigs: (connectionId: string) =>
     invoke<StorageConfig[]>("storage_configs", { connectionId }),
   addStorage: (connectionId: string, params: Record<string, string>) =>

@@ -4,8 +4,8 @@
 use crate::connections::{self, ConnectionInfo};
 use crate::proxmox::types::{
     AccessDomain, AccessRole, AccessUser, AclEntry, BackupJob, ClusterResource, FirewallRule,
-    GuestKind, NetworkInterface, PowerAction, ReplicationJob, StorageConfig, StorageContent,
-    StorageSummary, TaskEntry, TaskLogLine, TaskStatus, Version,
+    GuestKind, HaGroup, HaResource, HaStatus, NetworkInterface, PowerAction, ReplicationJob,
+    StorageConfig, StorageContent, StorageSummary, TaskEntry, TaskLogLine, TaskStatus, Version,
 };
 use crate::proxmox::Client;
 
@@ -376,6 +376,125 @@ pub async fn delete_storage(
         .await
         .map(|_| ())
         .map_err(|e| e.to_string())
+}
+
+/// Guests currently under HA management, cluster-wide.
+#[tauri::command]
+pub async fn ha_resources(
+    app: tauri::AppHandle,
+    connection_id: String,
+) -> Result<Vec<HaResource>, String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client.ha_resources().await.map_err(|e| e.to_string())
+}
+
+/// Put a guest under HA (params: sid like "qemu:100", state, group, ...).
+#[tauri::command]
+pub async fn add_ha_resource(
+    app: tauri::AppHandle,
+    connection_id: String,
+    params: std::collections::HashMap<String, String>,
+) -> Result<(), String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client
+        .add_ha_resource(&params)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn update_ha_resource(
+    app: tauri::AppHandle,
+    connection_id: String,
+    sid: String,
+    params: std::collections::HashMap<String, String>,
+) -> Result<(), String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client
+        .update_ha_resource(&sid, &params)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+/// Take a guest out of HA. The guest itself is left alone.
+#[tauri::command]
+pub async fn delete_ha_resource(
+    app: tauri::AppHandle,
+    connection_id: String,
+    sid: String,
+) -> Result<(), String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client
+        .delete_ha_resource(&sid)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn ha_groups(
+    app: tauri::AppHandle,
+    connection_id: String,
+) -> Result<Vec<HaGroup>, String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client.ha_groups().await.map_err(|e| e.to_string())
+}
+
+/// Create a failover group (params: group, nodes, restricted, nofailback).
+#[tauri::command]
+pub async fn add_ha_group(
+    app: tauri::AppHandle,
+    connection_id: String,
+    params: std::collections::HashMap<String, String>,
+) -> Result<(), String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client
+        .add_ha_group(&params)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn update_ha_group(
+    app: tauri::AppHandle,
+    connection_id: String,
+    group: String,
+    params: std::collections::HashMap<String, String>,
+) -> Result<(), String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client
+        .update_ha_group(&group, &params)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn delete_ha_group(
+    app: tauri::AppHandle,
+    connection_id: String,
+    group: String,
+) -> Result<(), String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client
+        .delete_ha_group(&group)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+/// Live HA state. Clusters without HA answer with an empty list or an error —
+/// callers treat both as "this cluster has no HA".
+#[tauri::command]
+pub async fn ha_status_current(
+    app: tauri::AppHandle,
+    connection_id: String,
+) -> Result<Vec<HaStatus>, String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client.ha_status_current().await.map_err(|e| e.to_string())
 }
 
 /// Firewall scope -> API path base. Cluster when node is None,
