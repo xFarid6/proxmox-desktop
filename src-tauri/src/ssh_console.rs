@@ -4,10 +4,17 @@
 //! frontend terminal needs zero changes to attach to an SSH shell instead
 //! of a Proxmox termproxy.
 //!
-//! Frame table (client -> bridge): `{user}:{ticket}\n` once on connect
-//! (ignored -- real creds already came from the keyring), `0:{byteLen}:{data}`
-//! keystrokes, `1:{cols}:{rows}:` resize, `2` keepalive (dropped). Bridge ->
-//! client is just the raw shell output bytes.
+//! Frame table (client -> bridge): `{user}:{ticket}\n` once on connect, then
+//! `0:{byteLen}:{data}` keystrokes, `1:{cols}:{rows}:` resize, `2` keepalive
+//! (dropped). Bridge -> client is just the raw shell output bytes.
+//!
+//! Unlike `console.rs`, the auth line here is *checked*. There, the ticket is
+//! validated by the remote Proxmox endpoint, so the bridge can pass it through
+//! blindly. Here the SSH session is already authenticated from the keyring
+//! before the listener even binds, so nothing downstream checks anything --
+//! this socket is the only thing between a local process and a root shell on
+//! the node. So the ticket is a one-time nonce this module generates, and a
+//! client that can't produce it gets dropped.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -27,6 +34,28 @@ use crate::ssh::{self, Auth, Session, SshSessions};
 /// `attachTerm`), which corrects it to the real terminal size immediately.
 const INITIAL_COLS: u16 = 80;
 const INITIAL_ROWS: u16 = 24;
+
+/// How long the bridge waits for the frontend to attach before giving up.
+/// The window between returning the port and the webview dialing it is
+/// milliseconds; this only has to be generous enough not to race a slow
+/// machine, and short enough that an unclaimed shell doesn't linger.
+const ACCEPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// One-time ticket gating the local bridge socket, as lowercase hex.
+///
+/// Uses rustls' provider RNG rather than pulling in a `rand` dependency --
+/// `console.rs` already reaches for the same provider for its TLS config.
+fn bridge_ticket() -> Result<String, String> {
+    let provider = rustls::crypto::CryptoProvider::get_default()
+        .cloned()
+        .unwrap_or_else(|| Arc::new(rustls::crypto::ring::default_provider()));
+    let mut bytes = [0u8; 32];
+    provider
+        .secure_random
+        .fill(&mut bytes)
+        .map_err(|_| "failed to generate a console ticket".to_string())?;
+    Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
+}
 
 /// One parsed client -> bridge frame off the pve-xtermjs wire protocol.
 #[derive(Debug, PartialEq, Eq)]
@@ -247,10 +276,15 @@ pub async fn open_ssh_shell(
         .map_err(|e| e.to_string())?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
     let user = ssh_info.user.clone();
+    let ticket = bridge_ticket()?;
+    let expected_auth = format!("{user}:{ticket}\n");
 
     tauri::async_runtime::spawn(async move {
         // One shot: serve the first local connection, then the bridge dies.
-        let Ok((stream, _)) = listener.accept().await else {
+        // Bounded, because until someone connects there is an authenticated
+        // shell sitting idle behind this port.
+        let Ok(Ok((stream, _))) = tokio::time::timeout(ACCEPT_TIMEOUT, listener.accept()).await
+        else {
             return;
         };
         drop(listener);
@@ -272,9 +306,16 @@ pub async fn open_ssh_shell(
                         _ => continue,
                     };
                     if !past_auth_line {
-                        // First message is the "{user}:{ticket}\n" auth line
-                        // ConsoleView.vue always sends -- discard it, real
-                        // creds already came from the keyring.
+                        // The "{user}:{ticket}\n" auth line. For the PVE
+                        // console this is checked by the *remote* endpoint, so
+                        // console.rs can pass it through blindly. Nothing
+                        // remote checks anything here -- the SSH session is
+                        // already authenticated from the keyring, so this
+                        // socket is the only gate on a root shell. Reject a
+                        // client that can't produce the ticket.
+                        if data != expected_auth.as_bytes() {
+                            break 'pump;
+                        }
                         past_auth_line = true;
                         continue;
                     }
@@ -307,7 +348,7 @@ pub async fn open_ssh_shell(
 
     Ok(ConsoleInfo {
         port,
-        ticket: String::new(),
+        ticket,
         user: Some(user),
     })
 }
@@ -411,5 +452,18 @@ mod tests {
         assert_eq!(ssh_host("https://pve.example.com:8006"), "pve.example.com");
         assert_eq!(ssh_host("http://10.0.0.5:8006"), "10.0.0.5");
         assert_eq!(ssh_host("pve.example.com"), "pve.example.com");
+    }
+
+    /// The ticket is the only thing standing between a local process and a
+    /// root shell on the node. An empty or predictable one would make the
+    /// auth-line gate in `open_ssh_shell` accept a bare `{user}:` line from
+    /// anybody, so assert it is actually random and actually long.
+    #[test]
+    fn bridge_ticket_is_long_random_hex() {
+        let a = bridge_ticket().expect("rng available");
+        let b = bridge_ticket().expect("rng available");
+        assert_eq!(a.len(), 64, "expected 32 bytes as hex");
+        assert!(a.chars().all(|c| c.is_ascii_hexdigit()), "not hex: {a}");
+        assert_ne!(a, b, "ticket must not repeat");
     }
 }
