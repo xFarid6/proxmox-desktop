@@ -1,10 +1,18 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, ref, watch } from "vue";
+import { cephAvailable, probeCeph } from "./ceph";
 import ToastList from "./components/ToastList.vue";
 import { startTaskAlerts } from "./stores/alerts";
-import { refreshCluster } from "./stores/cluster";
+import { nodes, refreshCluster } from "./stores/cluster";
+import { activeId } from "./stores/connections";
 
 startTaskAlerts();
+
+// Ceph is optional, so its nav entry only appears once a node answers
+// /ceph/status. Probed per connection and cached in ceph.ts.
+watch([activeId, nodes], () => void probeCeph(activeId.value, nodes.value[0]?.node), {
+  immediate: true,
+});
 
 // Pull-to-refresh (#52): pulling down from the top re-keys the RouterView
 // (remount refetches the view's data) and refreshes the cluster store.
@@ -34,7 +42,7 @@ function onTouchEnd() {
   pulling = false;
 }
 
-const nav = [
+const nav = computed(() => [
   { to: "/connections", label: "Connections" },
   { to: "/dashboard", label: "Dashboard" },
   { to: "/guests", label: "VMs & CTs" },
@@ -43,9 +51,10 @@ const nav = [
   { to: "/backups", label: "Backups" },
   { to: "/firewall", label: "Firewall" },
   { to: "/storage", label: "Storage" },
+  ...(cephAvailable.value ? [{ to: "/ceph", label: "Ceph" }] : []),
   { to: "/access", label: "Access" },
   { to: "/ha", label: "HA" },
-];
+]);
 </script>
 
 <template>

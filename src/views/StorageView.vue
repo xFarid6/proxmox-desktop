@@ -206,7 +206,18 @@ watch(activeId, refresh);
             :key="s.storage"
           >
             <td>{{ s.storage }}</td>
-            <td>{{ s.type }}</td>
+            <td>
+              <!-- Ceph-backed storages are managed from the Ceph view, not here. -->
+              <RouterLink
+                v-if="s.type === 'rbd' || s.type === 'cephfs'"
+                to="/ceph"
+              >
+                {{ s.type }}
+              </RouterLink>
+              <template v-else>
+                {{ s.type }}
+              </template>
+            </td>
             <td class="content-cell">
               {{ s.content ?? "—" }}
             </td>
