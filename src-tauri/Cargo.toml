@@ -44,6 +44,7 @@ conn-manager = { git = "https://github.com/xFarid6/conn-manager-rs", rev = "ded3
 # Signer::auth_publickey_sign's RPITIT (needed for agent auth) -- the
 # crate's own conditional compilation exists specifically for this.
 russh = { version = "0.54", default-features = false, features = ["flate2", "ring", "async-trait"] }
+if-addrs = "0.15.0"
 
 [dev-dependencies]
 wiremock = "0.6"

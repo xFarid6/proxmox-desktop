@@ -347,6 +347,19 @@ export interface ConsoleInfo {
   user?: string;
 }
 
+export interface DiscoveredHost {
+  ip: string;
+  host: string;
+  version?: string | null;
+}
+
+export interface TailscalePeer {
+  name: string;
+  ip: string;
+  online: boolean;
+  os: string;
+}
+
 export const api = {
   openConsole: (
     connectionId: string,
@@ -542,4 +555,6 @@ export const api = {
       acceptInvalidCerts: opts.acceptInvalidCerts,
       connectionId: opts.connectionId || null,
     }),
+  scanLan: () => invoke<DiscoveredHost[]>("scan_lan"),
+  scanTailscale: () => invoke<TailscalePeer[]>("scan_tailscale"),
 };

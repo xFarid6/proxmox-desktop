@@ -9,6 +9,7 @@ use crate::proxmox::types::{
     StorageContent, StorageSummary, TaskEntry, TaskLogLine, TaskStatus, Version,
 };
 use crate::proxmox::Client;
+use crate::scan::{self, DiscoveredHost, TailscalePeer};
 
 #[tauri::command]
 pub fn list_connections(app: tauri::AppHandle) -> Result<Vec<ConnectionInfo>, String> {
@@ -857,4 +858,16 @@ pub async fn test_connection(
     };
     let client = Client::new(&host, &token, accept_invalid_certs).map_err(|e| e.to_string())?;
     client.version().await.map_err(|e| e.to_string())
+}
+
+/// Probe the local subnet(s) for hosts answering on the PVE web UI port.
+#[tauri::command]
+pub async fn scan_lan() -> Result<Vec<DiscoveredHost>, String> {
+    scan::scan_lan().await
+}
+
+/// List the current tailnet's peers via `tailscale status --json`.
+#[tauri::command]
+pub async fn scan_tailscale() -> Result<Vec<TailscalePeer>, String> {
+    scan::scan_tailscale().await
 }
