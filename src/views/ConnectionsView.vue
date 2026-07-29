@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from "vue";
-import { api, type ConnectionInfo } from "../api";
+import { api, type ConnectionInfo, type DiscoveredHost, type TailscalePeer } from "../api";
 import { activeId, connections, refreshConnections, setActive } from "../stores/connections";
 import { toast } from "../stores/toast";
 
@@ -8,6 +8,10 @@ const editing = ref(false);
 const testResult = ref("");
 const error = ref("");
 const busy = ref(false);
+const scanning = ref(false);
+const scanError = ref("");
+const discoveredLan = ref<DiscoveredHost[]>([]);
+const discoveredTailscale = ref<TailscalePeer[]>([]);
 
 const blank = () => ({
   id: "",
@@ -111,6 +115,44 @@ async function remove(id: string) {
   }
 }
 
+async function scan() {
+  scanning.value = true;
+  scanError.value = "";
+  discoveredLan.value = [];
+  discoveredTailscale.value = [];
+
+  try {
+    const [lan, tailscale] = await Promise.all([
+      api.scanLan().catch(e => {
+        console.error("LAN scan failed:", e);
+        return [];
+      }),
+      api.scanTailscale().catch(e => {
+        console.error("Tailscale scan failed:", e);
+        return [];
+      }),
+    ]);
+    discoveredLan.value = lan;
+    discoveredTailscale.value = tailscale;
+
+    if (lan.length === 0 && tailscale.length === 0) {
+      scanError.value = "No hosts found";
+    }
+  } catch (e) {
+    scanError.value = String(e);
+  } finally {
+    scanning.value = false;
+  }
+}
+
+function useDiscoveredHost(host: string) {
+  Object.assign(form, blank());
+  form.host = host;
+  testResult.value = "";
+  error.value = "";
+  editing.value = true;
+}
+
 onMounted(refreshConnections);
 </script>
 
@@ -129,6 +171,62 @@ onMounted(refreshConnections);
       v-if="!editing"
       class="list"
     >
+      <div class="scan-section">
+        <button
+          :disabled="scanning"
+          @click="scan"
+        >
+          {{ scanning ? "Scanning..." : "Scan for hosts" }}
+        </button>
+
+        <p
+          v-if="scanError"
+          class="scan-message"
+        >
+          {{ scanError }}
+        </p>
+
+        <div
+          v-if="discoveredLan.length > 0"
+          class="results"
+        >
+          <p class="results-title">
+            LAN
+          </p>
+          <div
+            v-for="host in discoveredLan"
+            :key="host.ip"
+            class="result-item"
+            @click="useDiscoveredHost(host.host)"
+          >
+            <div>
+              <strong>{{ host.ip }}</strong>
+              <span class="result-detail">{{ host.version ? `v${host.version}` : "unconfirmed" }}</span>
+            </div>
+          </div>
+        </div>
+
+        <div
+          v-if="discoveredTailscale.length > 0"
+          class="results"
+        >
+          <p class="results-title">
+            Tailscale
+          </p>
+          <div
+            v-for="peer in discoveredTailscale"
+            :key="peer.ip"
+            class="result-item"
+            @click="useDiscoveredHost(`https://${peer.ip}:8006`)"
+          >
+            <div>
+              <strong>{{ peer.name }}</strong>
+              <span class="result-detail">{{ peer.ip }} · {{ peer.os }} · {{ peer.online ? "online" : "offline" }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div
         v-for="c in connections"
         :key="c.id"
@@ -365,5 +463,54 @@ onMounted(refreshConnections);
 
 .ok {
   color: #2a7;
+}
+
+.scan-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #ccc3;
+}
+
+.scan-message {
+  color: #999;
+  font-size: 0.9em;
+  margin: 0;
+}
+
+.results {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.results-title {
+  font-size: 0.85em;
+  opacity: 0.6;
+  margin: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.result-item {
+  display: flex;
+  align-items: center;
+  padding: 12px 16px;
+  border: 1px solid #ccc3;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.result-item:hover {
+  border-color: #e57000;
+  background-color: rgba(229, 112, 0, 0.05);
+}
+
+.result-detail {
+  opacity: 0.6;
+  font-size: 0.9em;
+  margin-left: 8px;
 }
 </style>

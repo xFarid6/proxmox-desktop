@@ -6,6 +6,7 @@ pub mod console;
 pub mod docker;
 pub mod known_hosts;
 pub mod proxmox;
+pub mod scan;
 pub mod ssh;
 pub mod ssh_console;
 
@@ -23,6 +24,8 @@ pub fn run() {
             commands::save_connection,
             commands::delete_connection,
             commands::test_connection,
+            commands::scan_lan,
+            commands::scan_tailscale,
             commands::cluster_resources,
             commands::guest_power,
             commands::node_tasks,
