@@ -118,9 +118,12 @@ anything on the live host that is not a throwaway guest made for the test.
   then `pnpm tauri android build --target aarch64`. Omit the file for unsigned.
 - Upload keystore + password live outside this repo on the dev box. **Losing them
   breaks updates for anyone who installed the APK.**
-- CI gotcha inherited from conn-manager: `keyring`'s `sync-secret-service`
-  feature needs `libdbus-1-dev` + `pkg-config` on `ubuntu-latest`, or the rust
-  job fails outright. Check this repo's workflow has it before trusting green.
+- `keyring`'s `sync-secret-service` feature needs dbus dev headers on
+  `ubuntu-latest`. This repo does not install them explicitly and is green
+  anyway — `libwebkit2gtk-4.1-dev` pulls them in transitively. That is an
+  implicit dependency, so if a future change drops or slims the webkit apt line,
+  add `libdbus-1-dev pkg-config` in the same commit. conn-manager-rs hit this
+  gap for real and had to add them.
 
 ## Longer-form context
 
