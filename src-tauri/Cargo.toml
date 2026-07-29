@@ -25,15 +25,22 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 thiserror = "2"
-tokio = { version = "1", features = ["net", "io-util", "time"] }
+tokio = { version = "1", features = ["net", "io-util", "time", "sync"] }
 tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
 futures-util = "0.3"
 rustls = "0.23"
 webpki-roots = "0.26"
 tauri-plugin-notification = "2.3.3"
-conn-manager = { git = "https://github.com/xFarid6/conn-manager-rs", rev = "9cffe6e67af3556364069ae7a14e2d6498033c46" }
+conn-manager = { git = "https://github.com/xFarid6/conn-manager-rs", rev = "ded32be7b89d1c570c10705af583ac8219130051" }
+# ring backend: the default aws-lc-rs needs NASM on Windows; ring doesn't.
+# async-trait works around a Send-not-general-enough inference error on
+# Signer::auth_publickey_sign's RPITIT (needed for agent auth) -- the
+# crate's own conditional compilation exists specifically for this.
+russh = { version = "0.54", default-features = false, features = ["flate2", "ring", "async-trait"] }
 
 [dev-dependencies]
 wiremock = "0.6"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tempfile = "3"
+rand_core = { version = "0.6", features = ["getrandom"] }
 
