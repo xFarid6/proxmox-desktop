@@ -354,6 +354,40 @@ impl CephDaemonAction {
     }
 }
 
+/// One entry from `GET /nodes/{node}/certificates/info`, and the body
+/// `POST /nodes/{node}/certificates/custom` answers with. Every field is
+/// optional in the PVE schema, so nothing here is required — a listing must
+/// degrade a row, never fail to decode.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CertificateInfo {
+    /// `pve-ssl.pem` for the node's self-signed cert, `pveproxy-ssl.pem` for a
+    /// custom or ACME one.
+    pub filename: Option<String>,
+    pub fingerprint: Option<String>,
+    pub subject: Option<String>,
+    pub issuer: Option<String>,
+    /// Unix epoch seconds.
+    pub notbefore: Option<i64>,
+    pub notafter: Option<i64>,
+    pub san: Option<Vec<String>>,
+    /// The certificate in PEM. The private key is never returned by the API.
+    pub pem: Option<String>,
+    /// PVE spells these two with hyphens; the alias covers the underscore
+    /// spelling, and renaming on deserialize only keeps the field snake_case
+    /// on the way out to the frontend.
+    #[serde(rename(deserialize = "public-key-type"), alias = "public_key_type")]
+    pub public_key_type: Option<String>,
+    #[serde(rename(deserialize = "public-key-bits"), alias = "public_key_bits")]
+    pub public_key_bits: Option<u32>,
+}
+
+/// One entry from `GET /cluster/acme/account`. The listing carries the name
+/// only — directory, contacts and ToS need the per-account detail call.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AcmeAccountEntry {
+    pub name: String,
+}
+
 /// `POST /nodes/{node}/{qemu|lxc}/{vmid}/vncproxy` response.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VncProxy {

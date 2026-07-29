@@ -712,6 +712,167 @@ async fn ceph_pools_crud() {
 }
 
 #[tokio::test]
+async fn certificates_info_decodes_hyphenated_and_partial_entries() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api2/json/nodes/pve1/certificates/info"))
+        .respond_with(json(
+            r#"{"data":[
+                {"filename":"pve-ssl.pem","fingerprint":"AA:BB","subject":"CN=pve1.local",
+                 "issuer":"CN=Proxmox Virtual Environment","notbefore":1700000000,
+                 "notafter":1800000000,"san":["pve1","pve1.local"],
+                 "public-key-type":"rsa","public-key-bits":2048,"pem":"-----BEGIN CERTIFICATE-----"},
+                {"filename":"pveproxy-ssl.pem"}
+            ]}"#,
+        ))
+        .mount(&server)
+        .await;
+
+    let certs = client(&server)
+        .await
+        .certificates_info("pve1")
+        .await
+        .unwrap();
+    assert_eq!(certs.len(), 2);
+    assert_eq!(certs[0].public_key_type.as_deref(), Some("rsa"));
+    assert_eq!(certs[0].public_key_bits, Some(2048));
+    assert_eq!(certs[0].notafter, Some(1800000000));
+    assert_eq!(
+        certs[0].san.as_deref(),
+        Some(&["pve1".to_string(), "pve1.local".to_string()][..])
+    );
+    // A node that reports nothing but a filename must still decode.
+    assert_eq!(certs[1].filename.as_deref(), Some("pveproxy-ssl.pem"));
+    assert!(certs[1].subject.is_none());
+}
+
+#[tokio::test]
+async fn custom_certificate_upload_and_revert() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api2/json/nodes/pve1/certificates/custom"))
+        .and(body_string_contains("force=1"))
+        .and(body_string_contains("restart=1"))
+        .respond_with(json(
+            r#"{"data":{"filename":"pveproxy-ssl.pem","subject":"CN=pve1.example.com","notafter":1800000000}}"#,
+        ))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path("/api2/json/nodes/pve1/certificates/custom"))
+        .and(query_param("restart", "1"))
+        .respond_with(json(r#"{"data":null}"#))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let c = client(&server).await;
+    let mut params = HashMap::new();
+    params.insert(
+        "certificates".to_string(),
+        "-----BEGIN CERTIFICATE-----".to_string(),
+    );
+    params.insert("key".to_string(), "-----BEGIN PRIVATE KEY-----".to_string());
+    params.insert("force".to_string(), "1".to_string());
+    params.insert("restart".to_string(), "1".to_string());
+    let info = c.upload_certificate("pve1", &params).await.unwrap();
+    assert_eq!(info.subject.as_deref(), Some("CN=pve1.example.com"));
+
+    assert_eq!(
+        c.delete_custom_certificate("pve1", true).await.unwrap(),
+        None
+    );
+}
+
+/// Order is a POST, renew a PUT on the same path — mixing them up would order
+/// a second certificate instead of renewing the one in place.
+#[tokio::test]
+async fn acme_order_and_renew_use_different_methods() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api2/json/nodes/pve1/certificates/acme/certificate"))
+        .respond_with(json(r#"{"data":"UPID:pve1:acmenewcert"}"#))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("PUT"))
+        .and(path("/api2/json/nodes/pve1/certificates/acme/certificate"))
+        .and(body_string_contains("force=1"))
+        .respond_with(json(r#"{"data":"UPID:pve1:acmerenewcert"}"#))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let c = client(&server).await;
+    assert_eq!(
+        c.acme_order_certificate("pve1").await.unwrap(),
+        "UPID:pve1:acmenewcert"
+    );
+    assert_eq!(
+        c.acme_renew_certificate("pve1", true).await.unwrap(),
+        "UPID:pve1:acmerenewcert"
+    );
+}
+
+#[tokio::test]
+async fn acme_accounts_and_plugins_are_cluster_wide() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api2/json/cluster/acme/account"))
+        .respond_with(json(r#"{"data":[{"name":"default"}]}"#))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api2/json/cluster/acme/account/default"))
+        .respond_with(json(
+            r#"{"data":{"directory":"https://acme-v02.api.letsencrypt.org/directory",
+                "location":"https://acme-v02.api.letsencrypt.org/acme/acct/1",
+                "tos":"https://letsencrypt.org/documents/LE-SA-v1.4.pdf",
+                "account":{"status":"valid","contact":["mailto:admin@example.com"]}}}"#,
+        ))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api2/json/cluster/acme/plugins"))
+        .respond_with(json(
+            r#"{"data":[{"plugin":"standalone","type":"standalone"},
+                {"plugin":"cf","type":"dns","api":"cf","digest":"abc"}]}"#,
+        ))
+        .mount(&server)
+        .await;
+
+    let c = client(&server).await;
+    let accounts = c.acme_accounts().await.unwrap();
+    assert_eq!(accounts[0].name, "default");
+
+    let detail = c.acme_account("default").await.unwrap();
+    assert_eq!(detail["account"]["status"], "valid");
+
+    let plugins = c.acme_plugins().await.unwrap();
+    assert_eq!(plugins[1]["api"], "cf");
+}
+
+/// A node with no ACME config answers the account listing with an empty list,
+/// not an error — the view's "no account configured" hint keys off that.
+#[tokio::test]
+async fn acme_accounts_can_be_empty() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api2/json/cluster/acme/account"))
+        .respond_with(json(r#"{"data":[]}"#))
+        .mount(&server)
+        .await;
+
+    assert!(client(&server)
+        .await
+        .acme_accounts()
+        .await
+        .unwrap()
+        .is_empty());
+}
+
+#[tokio::test]
 async fn access_users_and_acl() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))

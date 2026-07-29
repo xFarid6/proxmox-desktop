@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatBytes, formatUptime, percent } from "./format";
+import { formatBytes, formatTimestamp, formatUptime, percent } from "./format";
 
 describe("formatBytes", () => {
   it("returns em dash for missing input", () => {
@@ -43,6 +43,21 @@ describe("formatUptime", () => {
 
   it("shows days and hours at a day or more", () => {
     expect(formatUptime(2 * 86400 + 3600)).toBe("2d 1h");
+  });
+});
+
+describe("formatTimestamp", () => {
+  it("returns em dash for missing input", () => {
+    expect(formatTimestamp(undefined)).toBe("—");
+  });
+
+  it("reads the value as seconds, not milliseconds", () => {
+    // 2023-11-14 in every locale's rendering — the year is the safe assertion.
+    expect(formatTimestamp(1700000000)).toContain("2023");
+  });
+
+  it("does not treat epoch zero as missing", () => {
+    expect(formatTimestamp(0)).toContain("1970");
   });
 });
 
