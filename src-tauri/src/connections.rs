@@ -124,3 +124,34 @@ pub fn save(
 pub fn delete(app: &tauri::AppHandle, id: &str) -> Result<(), String> {
     store(app)?.delete::<ConnectionInfo>(id).map_err(map_err)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io;
+
+    /// `map_err` exists to keep raw OS error text out of the UI. `io::Error`'s
+    /// `Display` embeds strings like "(os error 5)" on Windows and Unix alike,
+    /// so assert the mapped message carries none of it — a future edit that
+    /// "adds the detail back" should fail here.
+    #[test]
+    fn io_and_serde_errors_do_not_leak_the_underlying_message() {
+        let io = ConnManagerError::Io(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "os error 5",
+        ));
+        let msg = map_err(io);
+        assert!(!msg.contains("os error"), "leaked OS error text: {msg}");
+
+        let serde =
+            ConnManagerError::Serde(serde_json::from_str::<ConnectionInfo>("{").unwrap_err());
+        let msg = map_err(serde);
+        assert!(!msg.contains("line"), "leaked serde position detail: {msg}");
+    }
+
+    #[test]
+    fn unknown_profile_names_the_id() {
+        let msg = map_err(ConnManagerError::UnknownProfile("pve-1".into()));
+        assert!(msg.contains("pve-1"), "should name the missing id: {msg}");
+    }
+}
