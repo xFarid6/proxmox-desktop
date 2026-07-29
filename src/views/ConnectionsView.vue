@@ -15,6 +15,12 @@ const blank = () => ({
   host: "",
   token: "",
   acceptInvalidCerts: false,
+  sshEnabled: false,
+  sshUser: "",
+  sshPort: 22,
+  sshAuth: "password" as "password" | "key" | "agent",
+  sshKeyPath: "",
+  sshSecret: "",
 });
 const form = reactive(blank());
 
@@ -26,7 +32,19 @@ function startAdd() {
 }
 
 function startEdit(c: ConnectionInfo) {
-  Object.assign(form, { ...c, token: "" });
+  Object.assign(form, {
+    id: c.id,
+    name: c.name,
+    host: c.host,
+    acceptInvalidCerts: c.acceptInvalidCerts,
+    token: "",
+    sshEnabled: !!c.ssh,
+    sshUser: c.ssh?.user ?? "",
+    sshPort: c.ssh?.port ?? 22,
+    sshAuth: c.ssh?.useAgent ? "agent" : c.ssh?.keyPath ? "key" : "password",
+    sshKeyPath: c.ssh?.keyPath ?? "",
+    sshSecret: "",
+  });
   testResult.value = "";
   error.value = "";
   editing.value = true;
@@ -61,8 +79,17 @@ async function save() {
       name: form.name || form.host,
       host: form.host,
       acceptInvalidCerts: form.acceptInvalidCerts,
+      ssh: form.sshEnabled
+        ? {
+            user: form.sshUser,
+            port: form.sshPort,
+            useAgent: form.sshAuth === "agent",
+            keyPath: form.sshAuth === "key" ? form.sshKeyPath : null,
+          }
+        : null,
     };
-    await api.saveConnection(info, form.token || undefined);
+    const sshSecret = form.sshEnabled && form.sshAuth !== "agent" ? form.sshSecret : undefined;
+    await api.saveConnection(info, form.token || undefined, sshSecret || undefined);
     editing.value = false;
     toast("Connection saved");
     await refreshConnections();
@@ -179,6 +206,61 @@ onMounted(refreshConnections);
         >
         Accept self-signed certificate (only enable for hosts you trust)
       </label>
+
+      <label class="check">
+        <input
+          v-model="form.sshEnabled"
+          type="checkbox"
+        >
+        Enable SSH shell for this connection
+      </label>
+
+      <template v-if="form.sshEnabled">
+        <label>
+          SSH user
+          <input
+            v-model="form.sshUser"
+            placeholder="root"
+            :required="form.sshEnabled"
+          >
+        </label>
+        <label>
+          SSH port
+          <input
+            v-model.number="form.sshPort"
+            type="number"
+          >
+        </label>
+        <label>
+          Auth method
+          <select v-model="form.sshAuth">
+            <option value="password">
+              Password
+            </option>
+            <option value="key">
+              Key file
+            </option>
+            <option value="agent">
+              SSH agent / Pageant
+            </option>
+          </select>
+        </label>
+        <label v-if="form.sshAuth === 'key'">
+          Key file path
+          <input
+            v-model="form.sshKeyPath"
+            placeholder="C:\Users\you\.ssh\id_ed25519"
+          >
+        </label>
+        <label v-if="form.sshAuth !== 'agent'">
+          {{ form.sshAuth === "key" ? "Key passphrase (if any)" : "SSH password" }}
+          <input
+            v-model="form.sshSecret"
+            type="password"
+            :placeholder="form.id ? '(unchanged)' : ''"
+          >
+        </label>
+      </template>
 
       <p
         v-if="testResult"

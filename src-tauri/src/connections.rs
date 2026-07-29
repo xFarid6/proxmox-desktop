@@ -10,7 +10,7 @@
 
 #[cfg(not(target_os = "android"))]
 use conn_manager::OsKeyring;
-use conn_manager::{ConnManagerError, Profile, ProfileStore};
+use conn_manager::{secondary_key, ConnManagerError, Profile, ProfileStore};
 #[cfg(target_os = "android")]
 use conn_manager::{SecretError, SecretStore};
 use serde::{Deserialize, Serialize};
@@ -19,6 +19,15 @@ use tauri::Manager;
 use crate::proxmox::Client;
 
 const KEYRING_SERVICE: &str = "proxmox-desktop";
+
+/// Name the SSH secret (password, or key passphrase) rides under in the
+/// keyring, alongside the profile's own API-token secret. `conn-manager`'s
+/// `ProfileStore` keys one secret directly by profile id; a second secret
+/// for the same profile has to be namespaced or it would collide with the
+/// token, so this is stored under `secondary_key(id, "ssh")` instead of
+/// reaching for `keyring` directly (which would bypass whichever
+/// `SecretStore` this app was built with, breaking Android).
+const SSH_SECRET_NAME: &str = "ssh";
 
 /// One saved connection = one cluster (a single-node install is a cluster of one).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -30,12 +39,30 @@ pub struct ConnectionInfo {
     pub host: String,
     /// Explicit per-connection opt-in for self-signed certs.
     pub accept_invalid_certs: bool,
+    /// SSH shell config, if this connection has one set up. The secret
+    /// (password or key passphrase) lives in the keyring under
+    /// `SSH_SECRET_NAME`, never here.
+    pub ssh: Option<SshInfo>,
 }
 
 impl Profile for ConnectionInfo {
     fn id(&self) -> &str {
         &self.id
     }
+}
+
+/// Per-connection SSH shell config. Auth method is picked by which fields
+/// are set: `key_path` means key-file auth (the secret is the key's
+/// passphrase, empty if it's not encrypted); otherwise `use_agent` tries
+/// the platform's running ssh-agent/Pageant; otherwise the secret is a
+/// plain password.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SshInfo {
+    pub user: String,
+    pub port: u16,
+    pub key_path: Option<String>,
+    pub use_agent: bool,
 }
 
 /// Routes secret storage to the Kotlin `KeystorePlugin` via
@@ -105,6 +132,31 @@ pub fn info_and_token(
     Ok((info, token))
 }
 
+/// Info + SSH config for a saved connection that has SSH set up. The
+/// secret (password/passphrase) is read separately via `get_ssh_secret` --
+/// agent auth needs no secret at all, so callers ask for it only when the
+/// config actually calls for one.
+pub fn info_and_ssh(app: &tauri::AppHandle, id: &str) -> Result<(ConnectionInfo, SshInfo), String> {
+    let info = store(app)?.get::<ConnectionInfo>(id).map_err(map_err)?;
+    let ssh = info
+        .ssh
+        .clone()
+        .ok_or_else(|| "no SSH credentials configured for this connection".to_string())?;
+    Ok((info, ssh))
+}
+
+pub fn get_ssh_secret(app: &tauri::AppHandle, id: &str) -> Result<String, String> {
+    store(app)?
+        .get_secret(&secondary_key(id, SSH_SECRET_NAME))
+        .map_err(map_err)
+}
+
+pub fn save_ssh_secret(app: &tauri::AppHandle, id: &str, secret: &str) -> Result<(), String> {
+    store(app)?
+        .set_secret(&secondary_key(id, SSH_SECRET_NAME), secret)
+        .map_err(map_err)
+}
+
 /// Build an API client for a saved connection (info from disk, token from keyring).
 pub fn client_for(app: &tauri::AppHandle, id: &str) -> Result<Client, String> {
     let (info, token) = info_and_token(app, id)?;
@@ -122,7 +174,13 @@ pub fn save(
 }
 
 pub fn delete(app: &tauri::AppHandle, id: &str) -> Result<(), String> {
-    store(app)?.delete::<ConnectionInfo>(id).map_err(map_err)
+    let store = store(app)?;
+    // `delete` below only removes the secret keyed by the profile id (the
+    // API token) -- the SSH secret rides a namespaced key of its own, so it
+    // would otherwise be orphaned in the keyring after this connection is
+    // gone.
+    store.delete_secret(&secondary_key(id, SSH_SECRET_NAME));
+    store.delete::<ConnectionInfo>(id).map_err(map_err)
 }
 
 #[cfg(test)]

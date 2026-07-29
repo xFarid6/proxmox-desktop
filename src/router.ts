@@ -11,6 +11,7 @@ const routes = [
     path: "/guests/:node/:kind/:vmid/console",
     component: () => import("./views/ConsoleView.vue"),
   },
+  { path: "/nodes/:node/ssh", component: () => import("./views/SshShellView.vue") },
   { path: "/tasks", component: () => import("./views/TasksView.vue") },
   { path: "/network", component: () => import("./views/NetworkView.vue") },
   { path: "/backups", component: () => import("./views/BackupsView.vue") },

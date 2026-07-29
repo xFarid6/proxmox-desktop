@@ -54,6 +54,12 @@ onMounted(refreshCluster);
             class="status"
             :class="n.status"
           >{{ n.status }}</span>
+          <router-link
+            class="ssh-link"
+            :to="`/nodes/${n.node}/ssh`"
+          >
+            SSH shell
+          </router-link>
         </div>
         <UsageBar
           label="CPU"
@@ -116,6 +122,11 @@ onMounted(refreshCluster);
 .status.online {
   background: #2a72;
   color: #2a7;
+}
+
+.ssh-link {
+  font-size: 0.8em;
+  margin-left: auto;
 }
 
 .meta {
