@@ -399,6 +399,125 @@ impl Client {
         self.get("/cluster/ha/status/current").await
     }
 
+    /// Ceph health, mon quorum, PG states and capacity. The blob is deep and
+    /// version-dependent, so it stays a raw Value and the UI reads the handful
+    /// of fields it needs. Every Ceph endpoint is per-node even though the
+    /// data is cluster-wide — the node just has to be a Ceph member.
+    ///
+    /// On a node without Ceph this errors (500 "rados_connect failed", 501 on
+    /// older PVE). That failure is how the app detects Ceph at all.
+    pub async fn ceph_status(&self, node: &str) -> Result<serde_json::Value> {
+        self.get(&format!("/nodes/{node}/ceph/status")).await
+    }
+
+    /// The CRUSH tree, `{root: {children: [...]}}`. Bucket nesting is not
+    /// fixed — rack and datacenter buckets are legal between root and host —
+    /// so it is walked in the UI rather than modelled here.
+    pub async fn ceph_osds(&self, node: &str) -> Result<serde_json::Value> {
+        self.get(&format!("/nodes/{node}/ceph/osd")).await
+    }
+
+    pub async fn ceph_pools(&self, node: &str) -> Result<Vec<CephPool>> {
+        self.get(&format!("/nodes/{node}/ceph/pool")).await
+    }
+
+    /// MON, MGR or MDS listing. One method: the three paths differ only in
+    /// their per-daemon fields, which the UI renders generically.
+    pub async fn ceph_services(
+        &self,
+        node: &str,
+        kind: CephServiceKind,
+    ) -> Result<serde_json::Value> {
+        self.get(&format!("/nodes/{node}/ceph/{}", kind.as_path()))
+            .await
+    }
+
+    /// Mark an OSD back into the cluster. Data rebalances onto it afterwards;
+    /// the call itself returns immediately with no task.
+    pub async fn ceph_osd_in(&self, node: &str, osdid: u32) -> Result<Option<String>> {
+        self.post(
+            &format!("/nodes/{node}/ceph/osd/{osdid}/in"),
+            &HashMap::new(),
+        )
+        .await
+    }
+
+    /// Mark an OSD out. The daemon keeps running; its data drains elsewhere.
+    pub async fn ceph_osd_out(&self, node: &str, osdid: u32) -> Result<Option<String>> {
+        self.post(
+            &format!("/nodes/{node}/ceph/osd/{osdid}/out"),
+            &HashMap::new(),
+        )
+        .await
+    }
+
+    /// Start or stop the OSD's daemon. Quirk: there is no per-OSD start/stop
+    /// path. Proxmox drives every Ceph daemon through the node-wide
+    /// `POST /nodes/{node}/ceph/{start|stop}` with `service=osd.{id}` —
+    /// omitting `service` there would hit the whole `ceph.target` instead.
+    pub async fn ceph_osd_power(
+        &self,
+        node: &str,
+        osdid: u32,
+        action: CephDaemonAction,
+    ) -> Result<Option<String>> {
+        let mut params = HashMap::new();
+        params.insert("service".to_string(), format!("osd.{osdid}"));
+        self.post(&format!("/nodes/{node}/ceph/{}", action.as_path()), &params)
+            .await
+    }
+
+    /// Destroy an OSD. `cleanup` also wipes the disk's partition table so the
+    /// device can be reused. Rides the query string because `delete_req`
+    /// sends no body — same as `storage_content`.
+    pub async fn ceph_osd_destroy(
+        &self,
+        node: &str,
+        osdid: u32,
+        cleanup: bool,
+    ) -> Result<Option<String>> {
+        let mut path = format!("/nodes/{node}/ceph/osd/{osdid}");
+        if cleanup {
+            path.push_str("?cleanup=1");
+        }
+        self.delete_req(&path).await
+    }
+
+    /// Create a pool (params: name, size, min_size, pg_num, crush_rule,
+    /// pg_autoscale_mode, add_storages).
+    pub async fn ceph_pool_create(
+        &self,
+        node: &str,
+        params: &HashMap<String, String>,
+    ) -> Result<Option<String>> {
+        self.post(&format!("/nodes/{node}/ceph/pool"), params).await
+    }
+
+    pub async fn ceph_pool_update(
+        &self,
+        node: &str,
+        name: &str,
+        params: &HashMap<String, String>,
+    ) -> Result<Option<String>> {
+        self.put(&format!("/nodes/{node}/ceph/pool/{name}"), params)
+            .await
+    }
+
+    /// Delete a pool and everything in it. `remove_storages` also drops the
+    /// PVE storage entries backed by it.
+    pub async fn ceph_pool_delete(
+        &self,
+        node: &str,
+        name: &str,
+        remove_storages: bool,
+    ) -> Result<Option<String>> {
+        let mut path = format!("/nodes/{node}/ceph/pool/{name}");
+        if remove_storages {
+            path.push_str("?remove_storages=1");
+        }
+        self.delete_req(&path).await
+    }
+
     pub async fn vncproxy(&self, node: &str, kind: GuestKind, vmid: u32) -> Result<VncProxy> {
         let mut params = HashMap::new();
         // websocket=1 makes the proxy speak websocket for embedding.

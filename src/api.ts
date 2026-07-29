@@ -230,6 +230,74 @@ export interface HaStatus {
   timestamp?: number;
 }
 
+/** One entry from `/nodes/{node}/ceph/pool`. `pool_name` is the name every
+ * other endpoint addresses the pool by; `pool` is the numeric id. */
+export interface CephPool {
+  pool?: number;
+  pool_name: string;
+  size?: number;
+  min_size?: number;
+  pg_num?: number;
+  /** Numeric id on older PVE, the rule name on newer. */
+  crush_rule?: string | number;
+  crush_rule_name?: string;
+  percent_used?: number;
+  bytes_used?: number;
+  pg_autoscale_mode?: string;
+  type?: string;
+}
+
+/** `/nodes/{node}/ceph/status`. The real payload is `ceph status --format
+ * json` and is far larger than this — only the fields the UI reads are
+ * declared, since the rest is version-dependent. */
+export interface CephStatus {
+  health?: {
+    status?: string;
+    checks?: Record<string, { severity?: string; summary?: { message?: string } }>;
+  };
+  quorum_names?: string[];
+  monmap?: { mons?: { name?: string }[] };
+  pgmap?: {
+    num_pgs?: number;
+    pgs_by_state?: { state_name: string; count: number }[];
+    bytes_total?: number;
+    bytes_used?: number;
+    bytes_avail?: number;
+  };
+}
+
+/** A CRUSH tree node from `/nodes/{node}/ceph/osd`. Buckets (root, host,
+ * rack, ...) carry `children`; leaves are the OSDs themselves. */
+export interface CrushNode {
+  id?: number;
+  name?: string;
+  type?: string;
+  status?: string;
+  in?: number;
+  device_class?: string;
+  percent_used?: number;
+  total_space?: number;
+  bytes_used?: number;
+  children?: CrushNode[];
+}
+
+export interface CephOsdTree {
+  root?: CrushNode;
+}
+
+export type CephServiceKind = "mon" | "mgr" | "mds";
+
+/** One MON/MGR/MDS daemon. The three listings share a name and a host and
+ * diverge after that, so the extra fields stay untyped. */
+export interface CephService {
+  name?: string;
+  host?: string;
+  addr?: string;
+  state?: string;
+  quorum?: number;
+  ceph_version_short?: string;
+}
+
 export interface ConsoleInfo {
   port: number;
   ticket: string;
@@ -356,6 +424,31 @@ export const api = {
     invoke<void>("delete_ha_group", { connectionId, group }),
   haStatusCurrent: (connectionId: string) =>
     invoke<HaStatus[]>("ha_status_current", { connectionId }),
+  /** Rejects on a node without Ceph — see `probeCeph` in ceph.ts. */
+  cephStatus: (connectionId: string, node: string) =>
+    invoke<CephStatus>("ceph_status", { connectionId, node }),
+  cephOsds: (connectionId: string, node: string) =>
+    invoke<CephOsdTree>("ceph_osds", { connectionId, node }),
+  cephPools: (connectionId: string, node: string) =>
+    invoke<CephPool[]>("ceph_pools", { connectionId, node }),
+  cephServices: (connectionId: string, node: string, kind: CephServiceKind) =>
+    invoke<CephService[]>("ceph_services", { connectionId, node, kind }),
+  cephOsdInOut: (connectionId: string, node: string, osdid: number, into: boolean) =>
+    invoke<string | null>("ceph_osd_in_out", { connectionId, node, osdid, into }),
+  cephOsdPower: (connectionId: string, node: string, osdid: number, action: "start" | "stop") =>
+    invoke<string | null>("ceph_osd_power", { connectionId, node, osdid, action }),
+  cephOsdDestroy: (connectionId: string, node: string, osdid: number, cleanup: boolean) =>
+    invoke<string | null>("ceph_osd_destroy", { connectionId, node, osdid, cleanup }),
+  cephPoolCreate: (connectionId: string, node: string, params: Record<string, string>) =>
+    invoke<string | null>("ceph_pool_create", { connectionId, node, params }),
+  cephPoolUpdate: (
+    connectionId: string,
+    node: string,
+    name: string,
+    params: Record<string, string>,
+  ) => invoke<string | null>("ceph_pool_update", { connectionId, node, name, params }),
+  cephPoolDelete: (connectionId: string, node: string, name: string, removeStorages: boolean) =>
+    invoke<string | null>("ceph_pool_delete", { connectionId, node, name, removeStorages }),
   storageConfigs: (connectionId: string) =>
     invoke<StorageConfig[]>("storage_configs", { connectionId }),
   addStorage: (connectionId: string, params: Record<string, string>) =>
