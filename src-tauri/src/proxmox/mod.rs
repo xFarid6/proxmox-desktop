@@ -518,6 +518,85 @@ impl Client {
         self.delete_req(&path).await
     }
 
+    /// The certificates pveproxy serves for this node: always the self-signed
+    /// `pve-ssl.pem`, plus `pveproxy-ssl.pem` once a custom or ACME cert has
+    /// replaced it.
+    pub async fn certificates_info(&self, node: &str) -> Result<Vec<CertificateInfo>> {
+        self.get(&format!("/nodes/{node}/certificates/info")).await
+    }
+
+    /// Install a custom certificate. Params: `certificates` (PEM chain), `key`
+    /// (PEM private key), `force=1` to overwrite an existing custom cert,
+    /// `restart=1` to restart pveproxy so it is served immediately. `params`
+    /// carries private key material — it must never be logged.
+    pub async fn upload_certificate(
+        &self,
+        node: &str,
+        params: &HashMap<String, String>,
+    ) -> Result<CertificateInfo> {
+        self.post(&format!("/nodes/{node}/certificates/custom"), params)
+            .await
+    }
+
+    /// Drop the custom certificate, reverting the node to its self-signed one.
+    /// `restart` rides the query string because `delete_req` sends no body —
+    /// same as `ceph_pool_delete`.
+    pub async fn delete_custom_certificate(
+        &self,
+        node: &str,
+        restart: bool,
+    ) -> Result<Option<String>> {
+        let mut path = format!("/nodes/{node}/certificates/custom");
+        if restart {
+            path.push_str("?restart=1");
+        }
+        self.delete_req(&path).await
+    }
+
+    /// Order the certificate for the ACME config on this node. Returns a task
+    /// UPID — the new cert is only in place once that task finishes, and
+    /// pveproxy is restarted by the task itself.
+    pub async fn acme_order_certificate(&self, node: &str) -> Result<String> {
+        self.post(
+            &format!("/nodes/{node}/certificates/acme/certificate"),
+            &HashMap::new(),
+        )
+        .await
+    }
+
+    /// Renew the ACME certificate. PVE refuses while it is more than 30 days
+    /// from expiry unless `force`. Returns a task UPID.
+    pub async fn acme_renew_certificate(&self, node: &str, force: bool) -> Result<String> {
+        let mut params = HashMap::new();
+        if force {
+            params.insert("force".to_string(), "1".to_string());
+        }
+        self.put(
+            &format!("/nodes/{node}/certificates/acme/certificate"),
+            &params,
+        )
+        .await
+    }
+
+    /// ACME accounts are cluster-wide, not per-node. Names only.
+    pub async fn acme_accounts(&self) -> Result<Vec<AcmeAccountEntry>> {
+        self.get("/cluster/acme/account").await
+    }
+
+    /// One account's registration: directory, contacts, ToS and the upstream
+    /// account object. The last of those is whatever the ACME server returns,
+    /// so the whole thing stays raw.
+    pub async fn acme_account(&self, name: &str) -> Result<serde_json::Value> {
+        self.get(&format!("/cluster/acme/account/{name}")).await
+    }
+
+    /// Configured ACME challenge plugins. Read-only on purpose — plugin
+    /// configuration is out of scope for #20. Per-plugin fields depend on the
+    /// DNS API behind them, hence the raw Value.
+    pub async fn acme_plugins(&self) -> Result<serde_json::Value> {
+        self.get("/cluster/acme/plugins").await
+    }
+
     pub async fn vncproxy(&self, node: &str, kind: GuestKind, vmid: u32) -> Result<VncProxy> {
         let mut params = HashMap::new();
         // websocket=1 makes the proxy speak websocket for embedding.
