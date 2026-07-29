@@ -1,10 +1,22 @@
 import { invoke } from "@tauri-apps/api/core";
 
+/** Per-connection SSH shell config. Auth method is picked by which fields
+ * are set: keyPath means key-file auth (secret = passphrase), otherwise
+ * useAgent tries the platform's running ssh-agent/Pageant, otherwise the
+ * secret is a plain password. */
+export interface SshInfo {
+  user: string;
+  port: number;
+  keyPath?: string | null;
+  useAgent: boolean;
+}
+
 export interface ConnectionInfo {
   id: string;
   name: string;
   host: string;
   acceptInvalidCerts: boolean;
+  ssh?: SshInfo | null;
 }
 
 export interface Version {
@@ -186,9 +198,15 @@ export const api = {
     mode: "vnc" | "term",
   ) => invoke<ConsoleInfo>("open_console", { connectionId, node, kind, vmid, mode }),
   listConnections: () => invoke<ConnectionInfo[]>("list_connections"),
-  saveConnection: (info: ConnectionInfo, token?: string) =>
-    invoke<void>("save_connection", { info, token: token || null }),
+  saveConnection: (info: ConnectionInfo, token?: string, sshSecret?: string) =>
+    invoke<void>("save_connection", {
+      info,
+      token: token || null,
+      sshSecret: sshSecret || null,
+    }),
   deleteConnection: (id: string) => invoke<void>("delete_connection", { id }),
+  openSshShell: (connectionId: string) =>
+    invoke<ConsoleInfo>("open_ssh_shell", { connectionId }),
   clusterResources: (connectionId: string) =>
     invoke<ClusterResource[]>("cluster_resources", { connectionId }),
   guestPower: (
