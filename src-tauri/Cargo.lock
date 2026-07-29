@@ -546,6 +546,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "conn-manager"
+version = "0.1.0"
+source = "git+https://github.com/xFarid6/conn-manager-rs?rev=9cffe6e67af3556364069ae7a14e2d6498033c46#9cffe6e67af3556364069ae7a14e2d6498033c46"
+dependencies = [
+ "keyring",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "cookie"
 version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2838,8 +2848,8 @@ dependencies = [
 name = "proxmox-desktop"
 version = "0.2.0"
 dependencies = [
+ "conn-manager",
  "futures-util",
- "keyring",
  "reqwest 0.12.28",
  "rustls",
  "serde",

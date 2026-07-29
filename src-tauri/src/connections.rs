@@ -2,10 +2,18 @@
 //! app config dir; the API token lives only in the OS keyring (Windows
 //! Credential Manager / macOS Keychain / Secret Service) — never on disk,
 //! never logged.
+//!
+//! Backed by the shared `conn-manager` crate's `ProfileStore`. The only
+//! platform split left is which `SecretStore` it's built with: `OsKeyring`
+//! (crate-provided) on desktop, `AndroidKeystore` (below, wrapping
+//! `android_keystore.rs`) on Android — decided once, in `store()`.
 
+#[cfg(not(target_os = "android"))]
+use conn_manager::OsKeyring;
+use conn_manager::{ConnManagerError, Profile, ProfileStore};
+#[cfg(target_os = "android")]
+use conn_manager::{SecretError, SecretStore};
 use serde::{Deserialize, Serialize};
-use std::fs;
-use std::path::PathBuf;
 use tauri::Manager;
 
 use crate::proxmox::Client;
@@ -24,39 +32,66 @@ pub struct ConnectionInfo {
     pub accept_invalid_certs: bool,
 }
 
-fn store_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+impl Profile for ConnectionInfo {
+    fn id(&self) -> &str {
+        &self.id
+    }
+}
+
+/// Routes secret storage to the Kotlin `KeystorePlugin` via
+/// `android_keystore.rs`. `service` is ignored — the plugin is already
+/// scoped to this app.
+#[cfg(target_os = "android")]
+struct AndroidKeystore(tauri::AppHandle);
+
+#[cfg(target_os = "android")]
+impl SecretStore for AndroidKeystore {
+    fn get(&self, _service: &str, id: &str) -> Result<String, SecretError> {
+        crate::android_keystore::get(&self.0, id).map_err(SecretError::Other)
+    }
+
+    fn set(&self, _service: &str, id: &str, secret: &str) -> Result<(), SecretError> {
+        crate::android_keystore::set(&self.0, id, secret).map_err(SecretError::Other)
+    }
+
+    fn delete(&self, _service: &str, id: &str) {
+        let _ = crate::android_keystore::delete(&self.0, id);
+    }
+}
+
+#[cfg(not(target_os = "android"))]
+type Store = ProfileStore<OsKeyring>;
+#[cfg(target_os = "android")]
+type Store = ProfileStore<AndroidKeystore>;
+
+/// The one `cfg` split in this file. Everything below is platform-agnostic.
+fn store(app: &tauri::AppHandle) -> Result<Store, String> {
     let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
-    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    Ok(dir.join("connections.json"))
+    #[cfg(not(target_os = "android"))]
+    let store = ProfileStore::new(dir, KEYRING_SERVICE);
+    #[cfg(target_os = "android")]
+    let store = ProfileStore::with_secret_store(dir, KEYRING_SERVICE, AndroidKeystore(app.clone()));
+    Ok(store)
+}
+
+/// `ConnManagerError` at the command boundary. Matched on the variant rather
+/// than passed through `Display` — `Io` embeds the raw `io::Error` message
+/// (e.g. `(os error 5)`), which isn't something to show a user.
+fn map_err(e: ConnManagerError) -> String {
+    match e {
+        ConnManagerError::Io(_) => "failed to read or write the connections file".into(),
+        ConnManagerError::Serde(_) => "the connections file is corrupted".into(),
+        ConnManagerError::Secret(e) => e.to_string(),
+        ConnManagerError::UnknownProfile(id) => format!("unknown connection: {id}"),
+    }
 }
 
 pub fn load(app: &tauri::AppHandle) -> Result<Vec<ConnectionInfo>, String> {
-    let path = store_path(app)?;
-    if !path.exists() {
-        return Ok(Vec::new());
-    }
-    let raw = fs::read_to_string(path).map_err(|e| e.to_string())?;
-    serde_json::from_str(&raw).map_err(|e| e.to_string())
+    store(app)?.load().map_err(map_err)
 }
 
-fn save_all(app: &tauri::AppHandle, conns: &[ConnectionInfo]) -> Result<(), String> {
-    let raw = serde_json::to_string_pretty(conns).map_err(|e| e.to_string())?;
-    fs::write(store_path(app)?, raw).map_err(|e| e.to_string())
-}
-
-#[cfg(not(target_os = "android"))]
-fn token_entry(id: &str) -> Result<keyring::Entry, String> {
-    keyring::Entry::new(KEYRING_SERVICE, id).map_err(|e| e.to_string())
-}
-
-#[cfg(not(target_os = "android"))]
-pub fn get_token(_app: &tauri::AppHandle, id: &str) -> Result<String, String> {
-    token_entry(id)?.get_password().map_err(|e| e.to_string())
-}
-
-#[cfg(target_os = "android")]
 pub fn get_token(app: &tauri::AppHandle, id: &str) -> Result<String, String> {
-    crate::android_keystore::get(app, id)
+    store(app)?.get_secret(id).map_err(map_err)
 }
 
 /// Info from disk + token from keyring for a saved connection.
@@ -64,13 +99,9 @@ pub fn info_and_token(
     app: &tauri::AppHandle,
     id: &str,
 ) -> Result<(ConnectionInfo, String), String> {
-    let conns = load(app)?;
-    let info = conns
-        .iter()
-        .find(|c| c.id == id)
-        .cloned()
-        .ok_or_else(|| format!("unknown connection: {id}"))?;
-    let token = get_token(app, id)?;
+    let store = store(app)?;
+    let info = store.get(id).map_err(map_err)?;
+    let token = store.get_secret(id).map_err(map_err)?;
     Ok((info, token))
 }
 
@@ -87,31 +118,40 @@ pub fn save(
     info: ConnectionInfo,
     token: Option<String>,
 ) -> Result<(), String> {
-    if let Some(t) = token {
-        #[cfg(not(target_os = "android"))]
-        token_entry(&info.id)?
-            .set_password(&t)
-            .map_err(|e| e.to_string())?;
-        #[cfg(target_os = "android")]
-        crate::android_keystore::set(app, &info.id, &t)?;
-    }
-    let mut conns = load(app)?;
-    match conns.iter_mut().find(|c| c.id == info.id) {
-        Some(existing) => *existing = info,
-        None => conns.push(info),
-    }
-    save_all(app, &conns)
+    store(app)?.save(info, token).map_err(map_err)
 }
 
 pub fn delete(app: &tauri::AppHandle, id: &str) -> Result<(), String> {
-    // Best effort — the entry may already be gone.
-    #[cfg(not(target_os = "android"))]
-    if let Ok(entry) = token_entry(id) {
-        let _ = entry.delete_credential();
+    store(app)?.delete::<ConnectionInfo>(id).map_err(map_err)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io;
+
+    /// `map_err` exists to keep raw OS error text out of the UI. `io::Error`'s
+    /// `Display` embeds strings like "(os error 5)" on Windows and Unix alike,
+    /// so assert the mapped message carries none of it — a future edit that
+    /// "adds the detail back" should fail here.
+    #[test]
+    fn io_and_serde_errors_do_not_leak_the_underlying_message() {
+        let io = ConnManagerError::Io(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "os error 5",
+        ));
+        let msg = map_err(io);
+        assert!(!msg.contains("os error"), "leaked OS error text: {msg}");
+
+        let serde =
+            ConnManagerError::Serde(serde_json::from_str::<ConnectionInfo>("{").unwrap_err());
+        let msg = map_err(serde);
+        assert!(!msg.contains("line"), "leaked serde position detail: {msg}");
     }
-    #[cfg(target_os = "android")]
-    let _ = crate::android_keystore::delete(app, id);
-    let mut conns = load(app)?;
-    conns.retain(|c| c.id != id);
-    save_all(app, &conns)
+
+    #[test]
+    fn unknown_profile_names_the_id() {
+        let msg = map_err(ConnManagerError::UnknownProfile("pve-1".into()));
+        assert!(msg.contains("pve-1"), "should name the missing id: {msg}");
+    }
 }

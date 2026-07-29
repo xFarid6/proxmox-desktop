@@ -31,11 +31,7 @@ futures-util = "0.3"
 rustls = "0.23"
 webpki-roots = "0.26"
 tauri-plugin-notification = "2.3.3"
-
-# No Android backend in the keyring crate — Android uses KeystorePlugin (see
-# src/android_keystore.rs).
-[target.'cfg(not(target_os = "android"))'.dependencies]
-keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
+conn-manager = { git = "https://github.com/xFarid6/conn-manager-rs", rev = "9cffe6e67af3556364069ae7a14e2d6498033c46" }
 
 [dev-dependencies]
 wiremock = "0.6"
