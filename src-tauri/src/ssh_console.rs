@@ -16,7 +16,6 @@
 //! the node. So the ticket is a one-time nonce this module generates, and a
 //! client that can't produce it gets dropped.
 
-use std::path::Path;
 use std::sync::Arc;
 
 use futures_util::{SinkExt, StreamExt};
@@ -27,7 +26,7 @@ use tokio_tungstenite::tungstenite::Message;
 
 use crate::connections;
 use crate::console::ConsoleInfo;
-use crate::ssh::{self, Auth, Session, SshSessions};
+use crate::ssh::{self, Session, SshSessions};
 
 /// Initial PTY size. Purely a starting point -- `ConsoleView.vue` sends a
 /// `1:{cols}:{rows}:` resize frame right after connecting (see its
@@ -187,20 +186,6 @@ fn parse_frames(buf: &mut Vec<u8>) -> Vec<Frame> {
     frames
 }
 
-/// Strips scheme and port off a Proxmox API host (`https://pve.example.com:8006`
-/// -> `pve.example.com`) to get the SSH target. proxmox-desktop stores one
-/// host per connection, so this assumes the SSH endpoint lives on the same
-/// machine as the API -- true for the common single-node case; a genuine
-/// multi-node cluster with per-node SSH endpoints isn't modeled yet.
-fn ssh_host(api_host: &str) -> String {
-    let without_scheme = api_host.rsplit("://").next().unwrap_or(api_host);
-    without_scheme
-        .split(':')
-        .next()
-        .unwrap_or(without_scheme)
-        .to_string()
-}
-
 /// Opens a root shell on a connection's host over SSH and bridges it
 /// through a local pve-xtermjs-speaking websocket, mirroring
 /// `console.rs::open_console`'s one-shot local listener.
@@ -210,32 +195,16 @@ pub async fn open_ssh_shell(
     sessions: tauri::State<'_, SshSessions>,
     connection_id: String,
 ) -> Result<ConsoleInfo, String> {
-    let (info, ssh_info) = connections::info_and_ssh(&app, &connection_id)?;
-    let host = ssh_host(&info.host);
-
-    let secret = if ssh_info.use_agent {
-        String::new()
-    } else {
-        connections::get_ssh_secret(&app, &connection_id)?
-    };
-    let auth = if ssh_info.use_agent {
-        Auth::Agent
-    } else if let Some(path) = &ssh_info.key_path {
-        Auth::Key {
-            path: Path::new(path),
-            passphrase: &secret,
-        }
-    } else {
-        Auth::Password(&secret)
-    };
+    let target = connections::ssh_target(&app, &connection_id)?;
+    let host = target.host.clone();
 
     let known_hosts_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
 
     let handle = ssh::connect(
         &host,
-        ssh_info.port,
-        &ssh_info.user,
-        &auth,
+        target.port,
+        &target.user,
+        &target.auth(),
         &known_hosts_dir,
     )
     .await
@@ -247,7 +216,7 @@ pub async fn open_ssh_shell(
         .await
         .channel_open_session()
         .await
-        .map_err(|e| ssh::describe_shell_error(&e, &host, ssh_info.port))?;
+        .map_err(|e| ssh::describe_shell_error(&e, &host, target.port))?;
     channel
         .request_pty(
             false,
@@ -259,11 +228,11 @@ pub async fn open_ssh_shell(
             &[],
         )
         .await
-        .map_err(|e| ssh::describe_shell_error(&e, &host, ssh_info.port))?;
+        .map_err(|e| ssh::describe_shell_error(&e, &host, target.port))?;
     channel
         .request_shell(false)
         .await
-        .map_err(|e| ssh::describe_shell_error(&e, &host, ssh_info.port))?;
+        .map_err(|e| ssh::describe_shell_error(&e, &host, target.port))?;
 
     sessions
         .0
@@ -275,7 +244,7 @@ pub async fn open_ssh_shell(
         .await
         .map_err(|e| e.to_string())?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
-    let user = ssh_info.user.clone();
+    let user = target.user.clone();
     let ticket = bridge_ticket()?;
     let expected_auth = format!("{user}:{ticket}\n");
 
@@ -445,13 +414,6 @@ mod tests {
     fn empty_buffer_does_not_panic() {
         let mut buf: Vec<u8> = Vec::new();
         assert!(parse_frames(&mut buf).is_empty());
-    }
-
-    #[test]
-    fn ssh_host_strips_scheme_and_port() {
-        assert_eq!(ssh_host("https://pve.example.com:8006"), "pve.example.com");
-        assert_eq!(ssh_host("http://10.0.0.5:8006"), "10.0.0.5");
-        assert_eq!(ssh_host("pve.example.com"), "pve.example.com");
     }
 
     /// The ticket is the only thing standing between a local process and a
