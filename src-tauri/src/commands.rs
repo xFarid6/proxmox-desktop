@@ -3,10 +3,10 @@
 
 use crate::connections::{self, ConnectionInfo};
 use crate::proxmox::types::{
-    AccessDomain, AccessRole, AccessUser, AclEntry, BackupJob, CephDaemonAction, CephPool,
-    CephServiceKind, ClusterResource, FirewallRule, GuestKind, HaGroup, HaResource, HaStatus,
-    NetworkInterface, PowerAction, ReplicationJob, StorageConfig, StorageContent, StorageSummary,
-    TaskEntry, TaskLogLine, TaskStatus, Version,
+    AccessDomain, AccessRole, AccessUser, AclEntry, AcmeAccountEntry, BackupJob, CephDaemonAction,
+    CephPool, CephServiceKind, CertificateInfo, ClusterResource, FirewallRule, GuestKind, HaGroup,
+    HaResource, HaStatus, NetworkInterface, PowerAction, ReplicationJob, StorageConfig,
+    StorageContent, StorageSummary, TaskEntry, TaskLogLine, TaskStatus, Version,
 };
 use crate::proxmox::Client;
 
@@ -641,6 +641,111 @@ pub async fn ceph_pool_delete(
         .ceph_pool_delete(&node, &name, remove_storages)
         .await
         .map_err(|e| e.to_string())
+}
+
+/// The certificates pveproxy serves for this node.
+#[tauri::command]
+pub async fn certificates_info(
+    app: tauri::AppHandle,
+    connection_id: String,
+    node: String,
+) -> Result<Vec<CertificateInfo>, String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client
+        .certificates_info(&node)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Install a custom certificate (params: certificates, key, force, restart).
+/// `params` carries the PEM private key: it is passed straight through and
+/// must never be logged or echoed back in an error.
+#[tauri::command]
+pub async fn upload_certificate(
+    app: tauri::AppHandle,
+    connection_id: String,
+    node: String,
+    params: std::collections::HashMap<String, String>,
+) -> Result<CertificateInfo, String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client
+        .upload_certificate(&node, &params)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Revert the node to its self-signed certificate.
+#[tauri::command]
+pub async fn delete_custom_certificate(
+    app: tauri::AppHandle,
+    connection_id: String,
+    node: String,
+    restart: bool,
+) -> Result<Option<String>, String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client
+        .delete_custom_certificate(&node, restart)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Order the node's ACME certificate. Returns a task UPID.
+#[tauri::command]
+pub async fn acme_order_certificate(
+    app: tauri::AppHandle,
+    connection_id: String,
+    node: String,
+) -> Result<String, String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client
+        .acme_order_certificate(&node)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Renew the node's ACME certificate. Returns a task UPID.
+#[tauri::command]
+pub async fn acme_renew_certificate(
+    app: tauri::AppHandle,
+    connection_id: String,
+    node: String,
+    force: bool,
+) -> Result<String, String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client
+        .acme_renew_certificate(&node, force)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn acme_accounts(
+    app: tauri::AppHandle,
+    connection_id: String,
+) -> Result<Vec<AcmeAccountEntry>, String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client.acme_accounts().await.map_err(|e| e.to_string())
+}
+
+/// One ACME account's registration detail.
+#[tauri::command]
+pub async fn acme_account(
+    app: tauri::AppHandle,
+    connection_id: String,
+    name: String,
+) -> Result<serde_json::Value, String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client.acme_account(&name).await.map_err(|e| e.to_string())
+}
+
+/// Configured ACME challenge plugins, read-only.
+#[tauri::command]
+pub async fn acme_plugins(
+    app: tauri::AppHandle,
+    connection_id: String,
+) -> Result<serde_json::Value, String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client.acme_plugins().await.map_err(|e| e.to_string())
 }
 
 /// Firewall scope -> API path base. Cluster when node is None,
