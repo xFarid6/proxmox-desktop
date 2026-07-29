@@ -41,6 +41,24 @@ const EXEC_TIMEOUT: Duration = Duration::from_secs(30);
 /// webview by asking for a chatty container's whole history.
 const MAX_LOG_LINES: u32 = 1000;
 
+/// The six fields `PsLine` actually reads, named explicitly.
+///
+/// `{{json .}}` would be shorter, but it emits every column `docker ps`
+/// knows -- including `Labels`, which for an image that ships a description
+/// (portainer's is HTML) is kilobytes per container that this module parses
+/// and throws away. Measured against a live guest: one portainer container
+/// was 5065 bytes as `{{json .}}` and 644 for four immich containers with
+/// this template. That payload crosses SSH on every refresh.
+///
+/// The cost is that a pre-20.10 daemon, which has no `State` column, fails
+/// the whole template rather than omitting one field. `PsLine` keeps its
+/// `default`s regardless -- they still cover a missing `Ports` on a
+/// container that publishes nothing.
+const PS_FORMAT: &str = concat!(
+    r#"{"ID":{{json .ID}},"Names":{{json .Names}},"Image":{{json .Image}},"#,
+    r#""State":{{json .State}},"Status":{{json .Status}},"Ports":{{json .Ports}}}"#,
+);
+
 /// One container as the guest's `docker ps` reported it.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -237,6 +255,37 @@ async fn exec_on_node(
         .map_err(|e| ssh::describe_shell_error(&e, &target.host, target.port))
 }
 
+/// Why `pct exec` never reached the guest, if that is what happened.
+///
+/// `pct` fails before entering the container -- "container '105' not
+/// running!" (exit 255), "Configuration file 'nodes/proxmox/lxc/999.conf'
+/// does not exist" (exit 2) -- and writes that to the same stderr a failing
+/// `docker` would have used. Folding those into `docker_error` produced
+/// "Docker could not list containers: container '105' not running!", which
+/// names the wrong subject: Docker was never asked anything.
+///
+/// Matched on `pct`'s wording rather than its exit codes because the code
+/// belongs to whatever `pct` decides to exit with, while these two messages
+/// are the two ways in this module's path that the guest is not there. The
+/// Docker CLI's own failures say "No such container" and exit 1/125/126/127,
+/// so there is no overlap to disambiguate.
+///
+/// `qm guest exec` needs none of this -- `unwrap_agent_output` already
+/// separates the agent's failure from the command's.
+fn guest_unreachable(out: &ExecOutput) -> Option<&'static str> {
+    if out.exit_status == 0 {
+        return None;
+    }
+    let detail = out.stderr.trim();
+    if detail.contains("not running") {
+        Some("This guest is not running, so nothing inside it can be reached. Start it first.")
+    } else if detail.contains("does not exist") {
+        Some("This guest no longer exists on this node. Refresh the guest list.")
+    } else {
+        None
+    }
+}
+
 /// Runs one command inside a guest and normalises the result across both
 /// guest kinds.
 async fn exec_in_guest(
@@ -255,7 +304,10 @@ async fn exec_in_guest(
     )
     .await?;
     match kind {
-        GuestKind::Lxc => Ok(out),
+        GuestKind::Lxc => match guest_unreachable(&out) {
+            Some(why) => Err(why.to_string()),
+            None => Ok(out),
+        },
         GuestKind::Qemu => unwrap_agent_output(out),
     }
 }
@@ -266,6 +318,55 @@ async fn exec_in_guest(
 /// thing with a different code.
 fn is_docker_missing(out: &ExecOutput) -> bool {
     out.exit_status == 127 || out.stderr.contains("not found")
+}
+
+/// Drops ANSI escape sequences from text bound for the log `<pre>`.
+///
+/// Containers log to a pipe that many runtimes still colour (portainer's
+/// output arrives full of `ESC[90m`), and a `<pre>` renders those as literal
+/// `[90m` noise. Stripping beats interpreting: turning them into real colour
+/// would mean emitting HTML and rendering it with `v-html`, which makes
+/// container log text -- the least trustworthy string in the app -- an
+/// injection surface, to win nothing but colour.
+///
+/// ponytail: handles CSI (`ESC[`...) and OSC (`ESC]`...), which is what
+/// colour and title-setting use. Other two-byte escapes lose only the `ESC`
+/// and their introducer; a full state machine is the upgrade if some
+/// runtime's output ever needs it.
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c != '\x1b' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            // CSI: parameter and intermediate bytes, then one final byte in
+            // the `@`..`~` range that ends the sequence.
+            Some('[') => {
+                for c in chars.by_ref() {
+                    if ('\x40'..='\x7e').contains(&c) {
+                        break;
+                    }
+                }
+            }
+            // OSC: runs until BEL or the two-character ESC `\` terminator.
+            Some(']') => {
+                while let Some(c) = chars.next() {
+                    if c == '\x07' {
+                        break;
+                    }
+                    if c == '\x1b' {
+                        chars.next();
+                        break;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out
 }
 
 fn parse_ps(stdout: &str) -> Vec<DockerContainer> {
@@ -306,7 +407,7 @@ pub async fn docker_ps(
         &connection_id,
         kind,
         vmid,
-        "docker ps -a --format '{{json .}}'",
+        &format!("docker ps -a --format '{PS_FORMAT}'"),
     )
     .await?;
     if is_docker_missing(&out) {
@@ -361,7 +462,7 @@ pub async fn docker_logs(
     if out.exit_status != 0 && out.stdout.trim().is_empty() {
         return Err(docker_error(&out, "read the log"));
     }
-    Ok(out.stdout)
+    Ok(strip_ansi(&out.stdout))
 }
 
 /// A failed `docker` invocation, as a sentence. Falls back to naming the
@@ -427,11 +528,123 @@ mod tests {
 
     #[test]
     fn the_ps_format_argument_survives_the_two_shell_hops() {
-        // `{{json .}}` contains a space, so it is quoted in the inner command
-        // and must come back out of the outer quoting intact rather than
-        // being split into two arguments.
-        let cmd = guest_command(GuestKind::Lxc, 100, "docker ps -a --format '{{json .}}'");
-        assert!(cmd.contains(r"--format '\''{{json .}}'\''"), "{cmd}");
+        // The template contains spaces, braces and double quotes, so it is
+        // quoted in the inner command and must come back out of the outer
+        // quoting intact rather than being split into several arguments.
+        let inner = format!("docker ps -a --format '{PS_FORMAT}'");
+        let cmd = guest_command(GuestKind::Lxc, 100, &inner);
+        assert!(
+            cmd.contains(&format!(r"--format '\''{PS_FORMAT}'\''")),
+            "{cmd}"
+        );
+        // No bare single quote can survive inside, or the template would end
+        // the shell word early.
+        assert!(!PS_FORMAT.contains('\''), "{PS_FORMAT}");
+    }
+
+    #[test]
+    fn the_ps_template_asks_for_exactly_the_fields_that_are_parsed() {
+        // Drift guard: a field added to `PsLine` without being added here
+        // would silently always be its `default`.
+        for field in ["ID", "Names", "Image", "State", "Status", "Ports"] {
+            assert!(
+                PS_FORMAT.contains(&format!("{{{{json .{field}}}}}")),
+                "{field}"
+            );
+        }
+        // What the template exists to avoid asking for.
+        assert!(!PS_FORMAT.contains("Labels"), "{PS_FORMAT}");
+        // And it must still parse as the JSON object `parse_ps` expects,
+        // once the daemon has substituted the values.
+        let rendered = PS_FORMAT
+            .replace("{{json .ID}}", r#""abc""#)
+            .replace("{{json .Names}}", r#""web""#)
+            .replace("{{json .Image}}", r#""nginx""#)
+            .replace("{{json .State}}", r#""running""#)
+            .replace("{{json .Status}}", r#""Up 2 hours""#)
+            .replace("{{json .Ports}}", r#""""#);
+        let got = parse_ps(&rendered);
+        assert_eq!(got.len(), 1, "{rendered}");
+        assert_eq!(got[0].name, "web");
+        assert_eq!(got[0].state, "running");
+    }
+
+    #[test]
+    fn colour_codes_are_stripped_out_of_a_log() {
+        // A real portainer log line: SGR colour around each field.
+        let raw = "\x1b[90m2026/07/29 09:24AM\x1b[0m \x1b[32mINF\x1b[0m starting Portainer";
+        assert_eq!(strip_ansi(raw), "2026/07/29 09:24AM INF starting Portainer");
+    }
+
+    #[test]
+    fn stripping_leaves_ordinary_log_text_byte_for_byte() {
+        for probe in [
+            "",
+            "plain line\n",
+            "json {\"a\": [1, 2]} and a bracket ] and a [90m that is not an escape",
+            "unicode: caffè 中文 🐳\n",
+        ] {
+            assert_eq!(strip_ansi(probe), probe);
+        }
+    }
+
+    #[test]
+    fn a_title_setting_escape_does_not_swallow_the_rest_of_the_log() {
+        // OSC ends at BEL; everything after it must survive.
+        assert_eq!(strip_ansi("\x1b]0;a title\x07after"), "after");
+        // And at the ESC `\` string terminator.
+        assert_eq!(strip_ansi("\x1b]0;a title\x1b\\after"), "after");
+        // An unterminated CSI at the very end must not panic or loop.
+        assert_eq!(strip_ansi("done\x1b["), "done");
+        assert_eq!(strip_ansi("done\x1b"), "done");
+    }
+
+    #[test]
+    fn pct_failing_to_enter_the_guest_is_not_reported_as_a_docker_failure() {
+        // The two ways this module's path finds no guest, verbatim from a
+        // live node.
+        let stopped = ExecOutput {
+            stdout: String::new(),
+            stderr: "container '105' not running!\n".into(),
+            exit_status: 255,
+        };
+        let why = guest_unreachable(&stopped).expect("stopped guest is recognised");
+        assert!(why.contains("not running"), "{why}");
+        // The old wording blamed Docker for it.
+        assert!(!docker_error(&stopped, "list containers").contains("not running!\n"));
+
+        let gone = ExecOutput {
+            stdout: String::new(),
+            stderr: "Configuration file 'nodes/proxmox/lxc/999.conf' does not exist\n".into(),
+            exit_status: 2,
+        };
+        assert!(guest_unreachable(&gone).is_some());
+    }
+
+    #[test]
+    fn dockers_own_failures_still_reach_the_user_as_docker_failures() {
+        for (stderr, status) in [
+            ("Error response from daemon: No such container: web", 1),
+            (
+                "Cannot connect to the Docker daemon at unix:///var/run/docker.sock.",
+                1,
+            ),
+            ("/bin/sh: docker: not found", 127),
+        ] {
+            let out = ExecOutput {
+                stdout: String::new(),
+                stderr: stderr.into(),
+                exit_status: status,
+            };
+            assert!(guest_unreachable(&out).is_none(), "{stderr}");
+        }
+        // A successful command is never "unreachable", whatever it printed.
+        let ok = ExecOutput {
+            stdout: String::new(),
+            stderr: "warning: something does not exist".into(),
+            exit_status: 0,
+        };
+        assert!(guest_unreachable(&ok).is_none());
     }
 
     #[test]
