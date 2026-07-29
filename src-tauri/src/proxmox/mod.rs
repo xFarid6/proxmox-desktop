@@ -338,6 +338,67 @@ impl Client {
         self.put(&format!("{base}/firewall/options"), params).await
     }
 
+    /// Guests managed by HA, cluster-wide.
+    pub async fn ha_resources(&self) -> Result<Vec<HaResource>> {
+        self.get("/cluster/ha/resources").await
+    }
+
+    /// Put a guest under HA (params: sid, state?, group?, max_restart?,
+    /// max_relocate?). Creating posts to the collection with `sid` in the
+    /// body; updating puts to the sid's own path — see `update_ha_resource`.
+    pub async fn add_ha_resource(
+        &self,
+        params: &HashMap<String, String>,
+    ) -> Result<serde_json::Value> {
+        self.post("/cluster/ha/resources", params).await
+    }
+
+    pub async fn update_ha_resource(
+        &self,
+        sid: &str,
+        params: &HashMap<String, String>,
+    ) -> Result<serde_json::Value> {
+        self.put(&format!("/cluster/ha/resources/{sid}"), params)
+            .await
+    }
+
+    /// Take a guest out of HA. Does not touch the guest itself.
+    pub async fn delete_ha_resource(&self, sid: &str) -> Result<serde_json::Value> {
+        self.delete_req(&format!("/cluster/ha/resources/{sid}"))
+            .await
+    }
+
+    pub async fn ha_groups(&self) -> Result<Vec<HaGroup>> {
+        self.get("/cluster/ha/groups").await
+    }
+
+    /// Create a group (params: group, nodes, restricted?, nofailback?).
+    pub async fn add_ha_group(
+        &self,
+        params: &HashMap<String, String>,
+    ) -> Result<serde_json::Value> {
+        self.post("/cluster/ha/groups", params).await
+    }
+
+    pub async fn update_ha_group(
+        &self,
+        group: &str,
+        params: &HashMap<String, String>,
+    ) -> Result<serde_json::Value> {
+        self.put(&format!("/cluster/ha/groups/{group}"), params)
+            .await
+    }
+
+    pub async fn delete_ha_group(&self, group: &str) -> Result<serde_json::Value> {
+        self.delete_req(&format!("/cluster/ha/groups/{group}"))
+            .await
+    }
+
+    /// Live HA state: quorum, the CRM master, each node's LRM, each service.
+    pub async fn ha_status_current(&self) -> Result<Vec<HaStatus>> {
+        self.get("/cluster/ha/status/current").await
+    }
+
     pub async fn vncproxy(&self, node: &str, kind: GuestKind, vmid: u32) -> Result<VncProxy> {
         let mut params = HashMap::new();
         // websocket=1 makes the proxy speak websocket for embedding.

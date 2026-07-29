@@ -424,6 +424,128 @@ async fn storage_configs_crud() {
 }
 
 #[tokio::test]
+async fn ha_resources_crud() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api2/json/cluster/ha/resources"))
+        .respond_with(json(
+            r#"{"data":[{"sid":"qemu:100","type":"vm","state":"started","group":"prod","max_restart":1,"max_relocate":2}]}"#,
+        ))
+        .mount(&server)
+        .await;
+    // Create posts the sid in the body; update puts it in the path.
+    Mock::given(method("POST"))
+        .and(path("/api2/json/cluster/ha/resources"))
+        .and(body_string_contains("sid=lxc%3A101"))
+        .and(body_string_contains("state=started"))
+        .respond_with(json(r#"{"data":null}"#))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("PUT"))
+        .and(path("/api2/json/cluster/ha/resources/qemu:100"))
+        .and(body_string_contains("state=stopped"))
+        .respond_with(json(r#"{"data":null}"#))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path("/api2/json/cluster/ha/resources/qemu:100"))
+        .respond_with(json(r#"{"data":null}"#))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let c = client(&server).await;
+    let res = c.ha_resources().await.unwrap();
+    assert_eq!(res[0].sid, "qemu:100");
+    assert_eq!(res[0].group.as_deref(), Some("prod"));
+    assert_eq!(res[0].max_relocate, Some(2));
+
+    let mut params = HashMap::new();
+    params.insert("sid".to_string(), "lxc:101".to_string());
+    params.insert("state".to_string(), "started".to_string());
+    c.add_ha_resource(&params).await.unwrap();
+
+    let mut params = HashMap::new();
+    params.insert("state".to_string(), "stopped".to_string());
+    c.update_ha_resource("qemu:100", &params).await.unwrap();
+    c.delete_ha_resource("qemu:100").await.unwrap();
+}
+
+#[tokio::test]
+async fn ha_groups_crud() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api2/json/cluster/ha/groups"))
+        .respond_with(json(
+            r#"{"data":[{"group":"prod","type":"group","nodes":"pve1:2,pve2:1,pve3","restricted":1}]}"#,
+        ))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api2/json/cluster/ha/groups"))
+        .and(body_string_contains("group=edge"))
+        .and(body_string_contains("nofailback=1"))
+        .respond_with(json(r#"{"data":null}"#))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("PUT"))
+        .and(path("/api2/json/cluster/ha/groups/prod"))
+        .and(body_string_contains("restricted=0"))
+        .respond_with(json(r#"{"data":null}"#))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path("/api2/json/cluster/ha/groups/prod"))
+        .respond_with(json(r#"{"data":null}"#))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let c = client(&server).await;
+    let groups = c.ha_groups().await.unwrap();
+    assert_eq!(groups[0].nodes.as_deref(), Some("pve1:2,pve2:1,pve3"));
+    assert_eq!(groups[0].restricted, Some(1));
+
+    let mut params = HashMap::new();
+    params.insert("group".to_string(), "edge".to_string());
+    params.insert("nodes".to_string(), "pve1".to_string());
+    params.insert("nofailback".to_string(), "1".to_string());
+    c.add_ha_group(&params).await.unwrap();
+
+    let mut params = HashMap::new();
+    params.insert("restricted".to_string(), "0".to_string());
+    c.update_ha_group("prod", &params).await.unwrap();
+    c.delete_ha_group("prod").await.unwrap();
+}
+
+#[tokio::test]
+async fn ha_status_current_decodes_heterogeneous_entries() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api2/json/cluster/ha/status/current"))
+        .respond_with(json(
+            r#"{"data":[
+                {"id":"quorum","type":"quorum","status":"OK","quorate":"1"},
+                {"id":"master:pve1","type":"master","status":"active","node":"pve1","timestamp":1700000000},
+                {"id":"lrm:pve2","type":"lrm","status":"active","node":"pve2"},
+                {"id":"service:qemu:100","type":"service","status":"started","node":"pve1","crm_state":"started"}
+            ]}"#,
+        ))
+        .mount(&server)
+        .await;
+
+    let st = client(&server).await.ha_status_current().await.unwrap();
+    assert_eq!(st.len(), 4);
+    assert_eq!(st[0].quorate.as_ref().unwrap(), "1");
+    assert_eq!(st[1].node.as_deref(), Some("pve1"));
+    assert_eq!(st[3].crm_state.as_deref(), Some("started"));
+}
+
+#[tokio::test]
 async fn access_users_and_acl() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))

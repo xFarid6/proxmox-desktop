@@ -255,6 +255,49 @@ pub struct AccessRole {
     pub special: Option<u8>,
 }
 
+/// One entry from `GET /cluster/ha/resources`. `sid` is the HA service id,
+/// `"qemu:100"` / `"lxc:101"`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HaResource {
+    pub sid: String,
+    #[serde(rename = "type")]
+    pub kind: Option<String>,
+    pub state: Option<String>,
+    pub group: Option<String>,
+    pub comment: Option<String>,
+    pub max_restart: Option<u32>,
+    pub max_relocate: Option<u32>,
+}
+
+/// One entry from `GET /cluster/ha/groups`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HaGroup {
+    pub group: String,
+    #[serde(rename = "type")]
+    pub kind: Option<String>,
+    /// Comma-separated `node[:priority]` list, e.g. "pve1:2,pve2".
+    pub nodes: Option<String>,
+    pub restricted: Option<u8>,
+    pub nofailback: Option<u8>,
+    pub comment: Option<String>,
+}
+
+/// One entry from `GET /cluster/ha/status/current`. Deliberately all-optional
+/// past `id`: the list is heterogeneous, `kind` being "quorum" | "master" |
+/// "lrm" | "service" decides which other fields the entry carries.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HaStatus {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub kind: Option<String>,
+    pub status: Option<String>,
+    pub node: Option<String>,
+    /// String on some PVE versions, int on others — pass it through as-is.
+    pub quorate: Option<serde_json::Value>,
+    pub crm_state: Option<String>,
+    pub timestamp: Option<u64>,
+}
+
 /// `POST /nodes/{node}/{qemu|lxc}/{vmid}/vncproxy` response.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VncProxy {
