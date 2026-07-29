@@ -19,8 +19,14 @@ pub fn save_connection(
     app: tauri::AppHandle,
     info: ConnectionInfo,
     token: Option<String>,
+    ssh_secret: Option<String>,
 ) -> Result<(), String> {
-    connections::save(&app, info, token)
+    let id = info.id.clone();
+    connections::save(&app, info, token)?;
+    if let Some(secret) = ssh_secret {
+        connections::save_ssh_secret(&app, &id, &secret)?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
