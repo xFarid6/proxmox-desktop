@@ -93,7 +93,12 @@ CI runs against a **mocked Proxmox API** (fixture HTTP server) — there is no l
 (FSL-1.1-MIT) — the same license as its siblings. Source-available: read, use,
 modify and redistribute freely; you just can't sell a competing product with it.
 Each version becomes plain MIT two years after release. Plain-language summary
-in [LICENSING.md](LICENSING.md).
+in [docs/licensing.md](docs/licensing.md).
 
 Releases up to and including v0.2.0 were published under MIT/Apache-2.0 and stay
 that way.
+
+## Docs
+
+Agent-facing and reference docs live in [`docs/`](docs/README.md) — API surface,
+licensing summary, and (as they land) anything else too long for this file.
