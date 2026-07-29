@@ -186,8 +186,13 @@ onMounted(refreshConnections);
           {{ scanError }}
         </p>
 
-        <div v-if="discoveredLan.length > 0" class="results">
-          <p class="results-title">LAN</p>
+        <div
+          v-if="discoveredLan.length > 0"
+          class="results"
+        >
+          <p class="results-title">
+            LAN
+          </p>
           <div
             v-for="host in discoveredLan"
             :key="host.ip"
@@ -201,8 +206,13 @@ onMounted(refreshConnections);
           </div>
         </div>
 
-        <div v-if="discoveredTailscale.length > 0" class="results">
-          <p class="results-title">Tailscale</p>
+        <div
+          v-if="discoveredTailscale.length > 0"
+          class="results"
+        >
+          <p class="results-title">
+            Tailscale
+          </p>
           <div
             v-for="peer in discoveredTailscale"
             :key="peer.ip"

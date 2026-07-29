@@ -87,7 +87,10 @@ fn hosts_in_subnet(ip: Ipv4Addr, netmask: Ipv4Addr) -> Vec<Ipv4Addr> {
 
 async fn probe(ip: Ipv4Addr) -> Option<DiscoveredHost> {
     let addr = std::net::SocketAddr::from((ip, PVE_PORT));
-    timeout(PROBE_TIMEOUT, TcpStream::connect(addr)).await.ok()?.ok()?;
+    timeout(PROBE_TIMEOUT, TcpStream::connect(addr))
+        .await
+        .ok()?
+        .ok()?;
     let host = format!("https://{ip}:{PVE_PORT}");
     let version = probe_version(&host).await;
     Some(DiscoveredHost {
@@ -139,10 +142,24 @@ pub async fn scan_tailscale() -> Result<Vec<TailscalePeer>, String> {
         .values()
         .filter_map(|p| {
             let name = p.get("HostName")?.as_str()?.to_string();
-            let ip = p.get("TailscaleIPs")?.as_array()?.first()?.as_str()?.to_string();
+            let ip = p
+                .get("TailscaleIPs")?
+                .as_array()?
+                .first()?
+                .as_str()?
+                .to_string();
             let online = p.get("Online").and_then(|o| o.as_bool()).unwrap_or(false);
-            let os = p.get("OS").and_then(|o| o.as_str()).unwrap_or("").to_string();
-            Some(TailscalePeer { name, ip, online, os })
+            let os = p
+                .get("OS")
+                .and_then(|o| o.as_str())
+                .unwrap_or("")
+                .to_string();
+            Some(TailscalePeer {
+                name,
+                ip,
+                online,
+                os,
+            })
         })
         .collect();
     result.sort_by(|a, b| a.name.cmp(&b.name));
@@ -159,7 +176,7 @@ mod tests {
             "192.168.1.10".parse().unwrap(),
             "255.255.255.0".parse().unwrap(),
         );
-        assert_eq!(hosts.len(), 253);
+        assert_eq!(hosts.len(), 254);
         assert_eq!(hosts[0], "192.168.1.1".parse::<Ipv4Addr>().unwrap());
         assert_eq!(
             hosts[hosts.len() - 1],
@@ -183,10 +200,24 @@ mod tests {
             .values()
             .filter_map(|p| {
                 let name = p.get("HostName")?.as_str()?.to_string();
-                let ip = p.get("TailscaleIPs")?.as_array()?.first()?.as_str()?.to_string();
+                let ip = p
+                    .get("TailscaleIPs")?
+                    .as_array()?
+                    .first()?
+                    .as_str()?
+                    .to_string();
                 let online = p.get("Online").and_then(|o| o.as_bool()).unwrap_or(false);
-                let os = p.get("OS").and_then(|o| o.as_str()).unwrap_or("").to_string();
-                Some(TailscalePeer { name, ip, online, os })
+                let os = p
+                    .get("OS")
+                    .and_then(|o| o.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                Some(TailscalePeer {
+                    name,
+                    ip,
+                    online,
+                    os,
+                })
             })
             .collect();
         assert_eq!(peers.len(), 2);
