@@ -441,6 +441,65 @@ pub async fn connect(
     Ok(session)
 }
 
+/// What one non-interactive `exec` channel produced. `exit_status` is the
+/// remote command's own exit code, so a caller can tell "ran, said no" (127
+/// from a missing binary) apart from "could not run".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecOutput {
+    pub stdout: String,
+    pub stderr: String,
+    pub exit_status: u32,
+}
+
+/// Runs one command on an already-authenticated connection and collects its
+/// output, the non-interactive sibling of the PTY shell `ssh_console.rs`
+/// opens. No PTY is requested: this is for machine-readable output, and a
+/// PTY would inject terminal control bytes into it.
+///
+/// Opens its own channel, so it composes with a shell channel already open
+/// on the same connection.
+///
+/// Deliberately not bounded by a timeout here -- how long a remote command
+/// may legitimately take is the caller's business, and the caller wraps this
+/// in `tokio::time::timeout` with a limit that suits it.
+pub async fn exec(
+    handle: &Handle<ClientHandler>,
+    command: &str,
+) -> Result<ExecOutput, russh::Error> {
+    let mut channel = handle.channel_open_session().await?;
+    channel.exec(true, command).await?;
+
+    let mut stdout: Vec<u8> = Vec::new();
+    let mut stderr: Vec<u8> = Vec::new();
+    let mut exit_status = None;
+    while let Some(msg) = channel.wait().await {
+        match msg {
+            russh::ChannelMsg::Data { ref data } => stdout.extend_from_slice(data),
+            // ext 1 is stderr per RFC 4254; anything else is undefined by the
+            // spec, so fold it into stdout rather than dropping bytes.
+            russh::ChannelMsg::ExtendedData { ref data, ext } => {
+                if ext == 1 {
+                    stderr.extend_from_slice(data);
+                } else {
+                    stdout.extend_from_slice(data);
+                }
+            }
+            russh::ChannelMsg::ExitStatus { exit_status: code } => exit_status = Some(code),
+            _ => {}
+        }
+    }
+
+    Ok(ExecOutput {
+        // Lossy on purpose: a container name or log line with a stray byte
+        // should degrade to a replacement char, never fail the whole call.
+        stdout: String::from_utf8_lossy(&stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&stderr).into_owned(),
+        // No exit-status message means the channel closed without one --
+        // treat it as a failure rather than a silent success.
+        exit_status: exit_status.unwrap_or(1),
+    })
+}
+
 /// Classify a failure from the shell-open calls (`channel_open_session`,
 /// `request_pty`, `request_shell`). Same transparent-IO leak as
 /// `ConnectError::from_auth_error` -- a connection drop right after auth

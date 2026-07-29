@@ -145,6 +145,70 @@ pub fn info_and_ssh(app: &tauri::AppHandle, id: &str) -> Result<(ConnectionInfo,
     Ok((info, ssh))
 }
 
+/// Everything needed to open an SSH connection to a saved connection's host,
+/// with the secret owned here so `auth()` can hand out a borrowing
+/// `ssh::Auth` without the caller juggling two lifetimes.
+pub struct SshTarget {
+    pub host: String,
+    pub port: u16,
+    pub user: String,
+    key_path: Option<String>,
+    use_agent: bool,
+    secret: String,
+}
+
+impl SshTarget {
+    /// Which of the three auth methods this connection's config selects.
+    /// Mirrors the field precedence documented on `SshInfo`.
+    pub fn auth(&self) -> crate::ssh::Auth<'_> {
+        if self.use_agent {
+            crate::ssh::Auth::Agent
+        } else if let Some(path) = &self.key_path {
+            crate::ssh::Auth::Key {
+                path: std::path::Path::new(path),
+                passphrase: &self.secret,
+            }
+        } else {
+            crate::ssh::Auth::Password(&self.secret)
+        }
+    }
+}
+
+/// Strips scheme and port off a Proxmox API host (`https://pve.example.com:8006`
+/// -> `pve.example.com`) to get the SSH target. proxmox-desktop stores one
+/// host per connection, so this assumes the SSH endpoint lives on the same
+/// machine as the API -- true for the common single-node case; a genuine
+/// multi-node cluster with per-node SSH endpoints isn't modeled yet.
+fn ssh_host(api_host: &str) -> String {
+    let without_scheme = api_host.rsplit("://").next().unwrap_or(api_host);
+    without_scheme
+        .split(':')
+        .next()
+        .unwrap_or(without_scheme)
+        .to_string()
+}
+
+/// Resolve a saved connection into a ready-to-dial SSH target: host from the
+/// API URL, config from disk, secret from the keyring. Agent auth reads no
+/// secret at all, so a connection set up for the agent works even with
+/// nothing stored under its SSH key.
+pub fn ssh_target(app: &tauri::AppHandle, id: &str) -> Result<SshTarget, String> {
+    let (info, ssh) = info_and_ssh(app, id)?;
+    let secret = if ssh.use_agent {
+        String::new()
+    } else {
+        get_ssh_secret(app, id)?
+    };
+    Ok(SshTarget {
+        host: ssh_host(&info.host),
+        port: ssh.port,
+        user: ssh.user,
+        key_path: ssh.key_path,
+        use_agent: ssh.use_agent,
+        secret,
+    })
+}
+
 pub fn get_ssh_secret(app: &tauri::AppHandle, id: &str) -> Result<String, String> {
     store(app)?
         .get_secret(&secondary_key(id, SSH_SECRET_NAME))
@@ -205,6 +269,53 @@ mod tests {
             ConnManagerError::Serde(serde_json::from_str::<ConnectionInfo>("{").unwrap_err());
         let msg = map_err(serde);
         assert!(!msg.contains("line"), "leaked serde position detail: {msg}");
+    }
+
+    #[test]
+    fn ssh_host_strips_scheme_and_port() {
+        assert_eq!(ssh_host("https://pve.example.com:8006"), "pve.example.com");
+        assert_eq!(ssh_host("http://10.0.0.5:8006"), "10.0.0.5");
+        assert_eq!(ssh_host("pve.example.com"), "pve.example.com");
+    }
+
+    /// The three auth methods are selected by field precedence, not by an
+    /// explicit tag, so assert the precedence rather than trusting it.
+    #[test]
+    fn auth_precedence_is_agent_then_key_then_password() {
+        let base = SshTarget {
+            host: "h".into(),
+            port: 22,
+            user: "root".into(),
+            key_path: None,
+            use_agent: false,
+            secret: "s3cret".into(),
+        };
+
+        let agent = SshTarget {
+            use_agent: true,
+            key_path: Some("/k".into()),
+            ..base_clone(&base)
+        };
+        assert!(matches!(agent.auth(), crate::ssh::Auth::Agent));
+
+        let key = SshTarget {
+            key_path: Some("/k".into()),
+            ..base_clone(&base)
+        };
+        assert!(matches!(key.auth(), crate::ssh::Auth::Key { .. }));
+
+        assert!(matches!(base.auth(), crate::ssh::Auth::Password("s3cret")));
+    }
+
+    fn base_clone(t: &SshTarget) -> SshTarget {
+        SshTarget {
+            host: t.host.clone(),
+            port: t.port,
+            user: t.user.clone(),
+            key_path: t.key_path.clone(),
+            use_agent: t.use_agent,
+            secret: t.secret.clone(),
+        }
     }
 
     #[test]
