@@ -146,6 +146,7 @@ async function scan() {
 }
 
 function useDiscoveredHost(host: string) {
+  Object.assign(form, blank());
   form.host = host;
   testResult.value = "";
   error.value = "";
