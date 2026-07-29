@@ -3,9 +3,10 @@
 
 use crate::connections::{self, ConnectionInfo};
 use crate::proxmox::types::{
-    AccessDomain, AccessRole, AccessUser, AclEntry, BackupJob, ClusterResource, FirewallRule,
-    GuestKind, HaGroup, HaResource, HaStatus, NetworkInterface, PowerAction, ReplicationJob,
-    StorageConfig, StorageContent, StorageSummary, TaskEntry, TaskLogLine, TaskStatus, Version,
+    AccessDomain, AccessRole, AccessUser, AclEntry, BackupJob, CephDaemonAction, CephPool,
+    CephServiceKind, ClusterResource, FirewallRule, GuestKind, HaGroup, HaResource, HaStatus,
+    NetworkInterface, PowerAction, ReplicationJob, StorageConfig, StorageContent, StorageSummary,
+    TaskEntry, TaskLogLine, TaskStatus, Version,
 };
 use crate::proxmox::Client;
 
@@ -495,6 +496,151 @@ pub async fn ha_status_current(
 ) -> Result<Vec<HaStatus>, String> {
     let client = connections::client_for(&app, &connection_id)?;
     client.ha_status_current().await.map_err(|e| e.to_string())
+}
+
+/// Ceph health, mon quorum, PG states and capacity. Errors on a node with no
+/// Ceph — the frontend uses that as its "is there Ceph here" probe.
+#[tauri::command]
+pub async fn ceph_status(
+    app: tauri::AppHandle,
+    connection_id: String,
+    node: String,
+) -> Result<serde_json::Value, String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client.ceph_status(&node).await.map_err(|e| e.to_string())
+}
+
+/// The CRUSH tree. Flattened into a table by the frontend.
+#[tauri::command]
+pub async fn ceph_osds(
+    app: tauri::AppHandle,
+    connection_id: String,
+    node: String,
+) -> Result<serde_json::Value, String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client.ceph_osds(&node).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn ceph_pools(
+    app: tauri::AppHandle,
+    connection_id: String,
+    node: String,
+) -> Result<Vec<CephPool>, String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client.ceph_pools(&node).await.map_err(|e| e.to_string())
+}
+
+/// MON, MGR or MDS listing, picked by `kind`.
+#[tauri::command]
+pub async fn ceph_services(
+    app: tauri::AppHandle,
+    connection_id: String,
+    node: String,
+    kind: CephServiceKind,
+) -> Result<serde_json::Value, String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client
+        .ceph_services(&node, kind)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Mark an OSD in or out of the cluster.
+#[tauri::command]
+pub async fn ceph_osd_in_out(
+    app: tauri::AppHandle,
+    connection_id: String,
+    node: String,
+    osdid: u32,
+    into: bool,
+) -> Result<Option<String>, String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    let res = if into {
+        client.ceph_osd_in(&node, osdid).await
+    } else {
+        client.ceph_osd_out(&node, osdid).await
+    };
+    res.map_err(|e| e.to_string())
+}
+
+/// Start or stop an OSD's daemon.
+#[tauri::command]
+pub async fn ceph_osd_power(
+    app: tauri::AppHandle,
+    connection_id: String,
+    node: String,
+    osdid: u32,
+    action: CephDaemonAction,
+) -> Result<Option<String>, String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client
+        .ceph_osd_power(&node, osdid, action)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Destroy an OSD. `cleanup` wipes the underlying disk as well.
+#[tauri::command]
+pub async fn ceph_osd_destroy(
+    app: tauri::AppHandle,
+    connection_id: String,
+    node: String,
+    osdid: u32,
+    cleanup: bool,
+) -> Result<Option<String>, String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client
+        .ceph_osd_destroy(&node, osdid, cleanup)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Create a pool (params: name, size, min_size, pg_num, ...).
+#[tauri::command]
+pub async fn ceph_pool_create(
+    app: tauri::AppHandle,
+    connection_id: String,
+    node: String,
+    params: std::collections::HashMap<String, String>,
+) -> Result<Option<String>, String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client
+        .ceph_pool_create(&node, &params)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn ceph_pool_update(
+    app: tauri::AppHandle,
+    connection_id: String,
+    node: String,
+    name: String,
+    params: std::collections::HashMap<String, String>,
+) -> Result<Option<String>, String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client
+        .ceph_pool_update(&node, &name, &params)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Delete a pool and its data. `remove_storages` also drops the PVE storage
+/// entries backed by it.
+#[tauri::command]
+pub async fn ceph_pool_delete(
+    app: tauri::AppHandle,
+    connection_id: String,
+    node: String,
+    name: String,
+    remove_storages: bool,
+) -> Result<Option<String>, String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client
+        .ceph_pool_delete(&node, &name, remove_storages)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Firewall scope -> API path base. Cluster when node is None,
