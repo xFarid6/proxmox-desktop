@@ -47,11 +47,17 @@ repo secrets. Two open milestones:
 - #65 Docker inside a guest — `docker` CLI over the #23 channel, not a bollard port
 - #66 live-cluster + real-device validation
 
-**v3** — #22 network editing, #20 certificates, #24 multi-cluster, #18 HA, #19 Ceph.
+**v3** — #22 network editing and #24 multi-cluster left. #18 HA, #19 Ceph and
+#20 certificates shipped 2026-07-30 (PRs #76/#77/#78), each as
+`HaView`/`CephView`/`CertificatesView` + client methods + wiremock tests.
 
 Order is a real dependency chain, not taste: #64 → #23 → #65. SSH creds ride the
-migrated secret store; Docker talks over the SSH channel. In v3, #24 before
-#18/#19 so those views are born multi-cluster-aware.
+migrated secret store; Docker talks over the SSH channel.
+
+The v3 plan wanted #24 before #18/#19 so those views were born
+multi-cluster-aware. It went the other way, so #24 has to retrofit three views
+(`HaView`, `CephView`, `CertificatesView`) that each read `activeId` directly —
+that is #24's cost, not a bug in them.
 
 #65 is the most speculative item — "containers on Proxmox" usually means LXC,
 which this app already manages via the API. #65 is about *Docker inside* an
