@@ -3,6 +3,7 @@ mod android_keystore;
 pub mod commands;
 pub mod connections;
 pub mod console;
+pub mod docker;
 pub mod known_hosts;
 pub mod proxmox;
 pub mod ssh;
@@ -55,6 +56,9 @@ pub fn run() {
             commands::set_acl,
             console::open_console,
             ssh_console::open_ssh_shell,
+            docker::docker_ps,
+            docker::docker_action,
+            docker::docker_logs,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
