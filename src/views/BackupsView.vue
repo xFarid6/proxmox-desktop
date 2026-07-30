@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from "vue";
 import {
   api,
   type BackupJob,
+  type Permissions,
   type ReplicationJob,
   type StorageContent,
   type StorageSummary,
@@ -11,6 +12,7 @@ import { activeId } from "../stores/connections";
 import { guests, nodes, refreshCluster } from "../stores/cluster";
 import { toast } from "../stores/toast";
 import { formatBytes } from "../format";
+import { backupPreflight } from "../backup";
 
 const node = ref("");
 const storage = ref("");
@@ -34,6 +36,32 @@ const confirmDelete = ref("");
 const backupStorages = computed(() =>
   storages.value.filter((s) => (s.content ?? "").split(",").includes("backup")),
 );
+
+// Pre-flight (#89). A vzdump refusal only shows up in the task log minutes
+// later, so the two knowable causes — missing privileges and no room — are
+// checked against the current selection before the button is pressed.
+const permissions = ref<Permissions | null>(null);
+
+const preflight = computed(() =>
+  backupPreflight({
+    permissions: permissions.value,
+    vmid: backupVmid.value,
+    guest: guests.value.find((g) => g.vmid === backupVmid.value),
+    storage: backupStorages.value.find((s) => s.storage === storage.value),
+  }),
+);
+
+async function loadPermissions() {
+  if (!activeId.value) return;
+  try {
+    permissions.value = await api.accessPermissions(activeId.value);
+  } catch {
+    // Reported as "checks skipped" rather than as a failure — this endpoint
+    // needs no privilege, so a failure here means the host is unreachable,
+    // which the rest of the view already surfaces.
+    permissions.value = null;
+  }
+}
 
 function backupDate(ctime?: number): string {
   return ctime ? new Date(ctime * 1000).toLocaleString() : "—";
@@ -145,7 +173,7 @@ onMounted(async () => {
   if (nodes.value.length === 0) await refreshCluster();
   if (!node.value && nodes.value.length > 0) node.value = nodes.value[0].node ?? "";
   backupVmid.value = guests.value[0]?.vmid;
-  await loadJobs();
+  await Promise.all([loadJobs(), loadPermissions()]);
 });
 
 watch(node, async () => {
@@ -157,6 +185,8 @@ watch(activeId, () => {
   node.value = "";
   storage.value = "";
   backups.value = [];
+  permissions.value = null;
+  void loadPermissions();
 });
 </script>
 
@@ -223,11 +253,33 @@ watch(activeId, () => {
           </select>
         </label>
         <button
-          :disabled="submitting || !backupVmid || !storage"
+          :disabled="submitting || !backupVmid || !storage || preflight.blockers.length > 0"
           @click="backupNow"
         >
           {{ submitting ? "Starting…" : "Backup now" }}
         </button>
+
+        <!-- Blockers are what Proxmox will refuse, so the button above is
+             disabled while any stands; warnings may still succeed (#89). -->
+        <div
+          v-if="preflight.blockers.length > 0 || preflight.warnings.length > 0"
+          class="preflight"
+        >
+          <p
+            v-for="b in preflight.blockers"
+            :key="b"
+            class="error"
+          >
+            {{ b }}
+          </p>
+          <p
+            v-for="w in preflight.warnings"
+            :key="w"
+            class="warn"
+          >
+            {{ w }}
+          </p>
+        </div>
       </div>
 
       <p v-if="loading">
@@ -380,6 +432,23 @@ watch(activeId, () => {
   display: flex;
   gap: 16px;
   align-items: flex-end;
+}
+
+/* Full-width inside the flex row so long sentences wrap instead of squeezing
+   the selects. */
+.preflight {
+  flex-basis: 100%;
+  max-width: 80ch;
+}
+
+.preflight p {
+  margin: 4px 0 0;
+  font-size: 0.85em;
+  line-height: 1.4;
+}
+
+.warn {
+  color: #e5a000;
 }
 
 label {

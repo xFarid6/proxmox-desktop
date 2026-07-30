@@ -5,8 +5,8 @@ use crate::connections::{self, ConnectionInfo};
 use crate::proxmox::types::{
     AccessDomain, AccessRole, AccessUser, AclEntry, AcmeAccountEntry, BackupJob, CephDaemonAction,
     CephPool, CephServiceKind, CertificateInfo, ClusterResource, FirewallRule, GuestKind, HaGroup,
-    HaResource, HaStatus, NodeNetwork, PowerAction, ReplicationJob, StorageConfig, StorageContent,
-    StorageSummary, TaskEntry, TaskLogLine, TaskStatus, Version,
+    HaResource, HaStatus, NodeNetwork, Permissions, PowerAction, ReplicationJob, StorageConfig,
+    StorageContent, StorageSummary, TaskEntry, TaskLogLine, TaskStatus, Version,
 };
 use crate::proxmox::Client;
 use crate::scan::{self, DiscoveredHost, TailscalePeer};
@@ -401,6 +401,18 @@ pub async fn access_acl(
 ) -> Result<Vec<AclEntry>, String> {
     let client = connections::client_for(&app, &connection_id)?;
     client.access_acl().await.map_err(|e| e.to_string())
+}
+
+/// The connection's own effective privileges. Needs no privilege itself, so
+/// this answers "would this action be refused?" even for a token that may not
+/// read `/access/acl` — which is exactly the token the answer matters for.
+#[tauri::command]
+pub async fn access_permissions(
+    app: tauri::AppHandle,
+    connection_id: String,
+) -> Result<Permissions, String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client.access_permissions().await.map_err(|e| e.to_string())
 }
 
 /// Grant or revoke ACLs (path, roles, users; delete=1 revokes).

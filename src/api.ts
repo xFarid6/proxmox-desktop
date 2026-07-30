@@ -146,6 +146,12 @@ export interface AclEntry {
   propagate?: number;
 }
 
+/** `/access/permissions` — the connection's *own* effective privileges, keyed
+ * by ACL path then privilege name. PVE sends `1` for what is granted and omits
+ * the rest, so presence is the answer. Only paths an ACL names are listed, so
+ * read it through `hasPrivilege` in backup.ts rather than by direct lookup. */
+export type Permissions = Record<string, Record<string, number>>;
+
 export interface AccessRole {
   roleid: string;
   privs?: string;
@@ -514,6 +520,11 @@ export const api = {
     call<AccessDomain[]>("access_domains", { connectionId }),
   accessRoles: (connectionId: string) => call<AccessRole[]>("access_roles", { connectionId }),
   accessAcl: (connectionId: string) => call<AclEntry[]>("access_acl", { connectionId }),
+  /** Needs no privilege of its own — a token holding none gets `{}` and a 200,
+   * not a 403 — so this is safe to call for exactly the tokens whose limits
+   * matter. Verified live against PVE 9.2.4. */
+  accessPermissions: (connectionId: string) =>
+    call<Permissions>("access_permissions", { connectionId }),
   setAcl: (connectionId: string, params: Record<string, string>) =>
     call<void>("set_acl", { connectionId, params }),
   haResources: (connectionId: string) => call<HaResource[]>("ha_resources", { connectionId }),

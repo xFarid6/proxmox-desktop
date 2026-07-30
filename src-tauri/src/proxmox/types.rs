@@ -435,3 +435,10 @@ pub struct TermProxy {
     pub port: serde_json::Value,
     pub user: Option<String>,
 }
+
+/// `GET /access/permissions` — the calling token's own effective privileges,
+/// keyed by ACL path then by privilege name. PVE sends `1` for every granted
+/// privilege and omits the rest, so presence is the whole answer; the value is
+/// carried through untouched rather than being flattened to a set, since the
+/// UI passes the map straight to the frontend.
+pub type Permissions = std::collections::HashMap<String, std::collections::HashMap<String, u8>>;
