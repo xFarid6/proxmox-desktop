@@ -1029,3 +1029,46 @@ async fn access_permissions_empty_for_a_token_with_none() {
         .unwrap()
         .is_empty());
 }
+
+/// The Tasks tab's "start a task" action (#88). PVE answers a bare UPID
+/// string, and the request carries no body — the endpoint takes no parameters,
+/// which is also why nothing can be upgraded by accident here.
+#[tokio::test]
+async fn apt_update_posts_and_returns_a_upid() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api2/json/nodes/pve1/apt/update"))
+        .and(header("Authorization", format!("PVEAPIToken={TOKEN}")))
+        .respond_with(json(
+            r#"{"data":"UPID:pve1:000C8DCE:005D9D0C:6A6AB670:aptupdate::root@pam:"}"#,
+        ))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let upid = client(&server).await.apt_update("pve1").await.unwrap();
+    assert!(upid.contains(":aptupdate:"));
+}
+
+/// A token without Sys.Modify on the node is refused, and the 403 has to reach
+/// the frontend intact for `explainError` to name the missing privilege.
+#[tokio::test]
+async fn apt_update_surfaces_a_permission_failure() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api2/json/nodes/pve1/apt/update"))
+        .respond_with(ResponseTemplate::new(403).set_body_raw(
+            r#"{"message":"Permission check failed (/nodes/pve1, Sys.Modify)\n","data":null}"#,
+            "application/json",
+        ))
+        .mount(&server)
+        .await;
+
+    match client(&server).await.apt_update("pve1").await {
+        Err(Error::Api { status, message }) => {
+            assert_eq!(status, 403);
+            assert!(message.contains("Sys.Modify"));
+        }
+        other => panic!("expected an Api error, got {other:?}"),
+    }
+}

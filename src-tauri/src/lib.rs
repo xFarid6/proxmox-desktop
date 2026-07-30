@@ -29,6 +29,7 @@ pub fn run() {
             commands::cluster_resources,
             commands::guest_power,
             commands::node_tasks,
+            commands::apt_update,
             commands::task_status,
             commands::task_log,
             commands::node_network,

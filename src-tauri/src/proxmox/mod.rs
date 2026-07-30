@@ -294,6 +294,18 @@ impl Client {
         self.get(&format!("/nodes/{node}/tasks?limit=50")).await
     }
 
+    /// Refresh the node's APT package index, as a task — the UPID comes back.
+    ///
+    /// This is the one node-scoped job PVE will start on demand that changes
+    /// nothing but a package index: no upgrade is installed, no service is
+    /// restarted. It is what the Tasks tab offers as "start a task", since
+    /// every other task-producing call in this client either belongs to
+    /// another tab or touches guests. Needs Sys.Modify on the node.
+    pub async fn apt_update(&self, node: &str) -> Result<String> {
+        self.post(&format!("/nodes/{node}/apt/update"), &HashMap::new())
+            .await
+    }
+
     pub async fn task_status(&self, node: &str, upid: &str) -> Result<TaskStatus> {
         self.get(&format!("/nodes/{node}/tasks/{upid}/status"))
             .await
