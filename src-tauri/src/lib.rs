@@ -61,6 +61,7 @@ pub fn run() {
             commands::access_domains,
             commands::access_roles,
             commands::access_acl,
+            commands::access_permissions,
             commands::set_acl,
             commands::ha_resources,
             commands::add_ha_resource,

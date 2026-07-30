@@ -35,6 +35,7 @@ commands (all read-only, print pretty JSON to stdout):\n\
   node-network <node>\n\
   storages <node>\n\
   tasks <node>\n\
+  permissions       -- what this token itself may do, per path\n\
   scan-lan          -- no credentials needed\n\
   scan-tailscale    -- no credentials needed\n\
 \n\
@@ -64,6 +65,7 @@ enum Command {
     Tasks {
         node: String,
     },
+    Permissions,
     ScanLan,
     ScanTailscale,
 }
@@ -107,6 +109,7 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
         "tasks" => Ok(Command::Tasks {
             node: args.get(1).ok_or("tasks: missing <node>")?.clone(),
         }),
+        "permissions" => Ok(Command::Permissions),
         "scan-lan" => Ok(Command::ScanLan),
         "scan-tailscale" => Ok(Command::ScanTailscale),
         other => Err(format!("unknown command '{other}'\n\n{}", usage())),
@@ -162,6 +165,12 @@ async fn run(command: Command) -> Result<(), String> {
         Command::Storages { node } => print_json(
             &build_client()?
                 .node_storages(&node)
+                .await
+                .map_err(|e| e.to_string())?,
+        ),
+        Command::Permissions => print_json(
+            &build_client()?
+                .access_permissions()
                 .await
                 .map_err(|e| e.to_string())?,
         ),

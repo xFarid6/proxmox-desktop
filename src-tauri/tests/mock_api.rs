@@ -980,3 +980,52 @@ async fn access_users_and_acl() {
     c.set_acl(&params).await.unwrap();
     c.delete_user("alice@pve").await.unwrap();
 }
+
+/// Fixture is the real `/access/permissions` body from PVE 9.2.4 for a token
+/// with Privilege Separation off, trimmed to four privileges. The point of the
+/// assertions is what is *absent*: PVE lists only paths an ACL names, never
+/// `/vms/100`, which is why the frontend walks up the path rather than looking
+/// it up directly.
+#[tokio::test]
+async fn access_permissions_decodes_path_to_privilege_map() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api2/json/access/permissions"))
+        .and(header("Authorization", format!("PVEAPIToken={TOKEN}")))
+        .respond_with(json(
+            r#"{"data":{
+                "/":{"VM.Backup":1,"Datastore.AllocateSpace":1,"Sys.Audit":1,"VM.Audit":1},
+                "/vms":{"VM.Backup":1,"VM.Audit":1},
+                "/storage":{"Datastore.AllocateSpace":1}
+            }}"#,
+        ))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let perms = client(&server).await.access_permissions().await.unwrap();
+    assert_eq!(perms["/vms"]["VM.Backup"], 1);
+    assert_eq!(perms["/storage"]["Datastore.AllocateSpace"], 1);
+    assert!(!perms["/vms"].contains_key("Datastore.AllocateSpace"));
+    assert!(!perms.contains_key("/vms/100"));
+}
+
+/// A token holding nothing gets an empty object and a 200 — not a 403.
+/// Confirmed live against PVE 9.2.4 with a privilege-separated token that had
+/// no ACLs, and the reason the pre-flight check can run for any connection.
+#[tokio::test]
+async fn access_permissions_empty_for_a_token_with_none() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api2/json/access/permissions"))
+        .respond_with(json(r#"{"data":{}}"#))
+        .mount(&server)
+        .await;
+
+    assert!(client(&server)
+        .await
+        .access_permissions()
+        .await
+        .unwrap()
+        .is_empty());
+}

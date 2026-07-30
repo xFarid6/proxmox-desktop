@@ -357,6 +357,19 @@ impl Client {
         self.get("/access/acl").await
     }
 
+    /// What *this* token may do, per path — `{"/vms/100": {"VM.Backup": 1}, ...}`.
+    ///
+    /// Unlike `/access/acl` this needs no privilege of its own (any token may
+    /// ask about itself), and it already accounts for role expansion and
+    /// privilege separation, so it is the only honest way to answer "will this
+    /// action be refused?" before attempting it. Paths are only listed where
+    /// something is granted, and not every descendant is enumerated — a caller
+    /// asking about `/vms/100` must also look at `/vms` and `/`. See
+    /// `hasPrivilege` in `src/backup.ts`.
+    pub async fn access_permissions(&self) -> Result<Permissions> {
+        self.get("/access/permissions").await
+    }
+
     /// Grant or revoke ACLs (params: path, roles, users|groups|tokens,
     /// delete=1 to revoke).
     pub async fn set_acl(&self, params: &HashMap<String, String>) -> Result<serde_json::Value> {
