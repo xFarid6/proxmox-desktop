@@ -11,6 +11,7 @@ import {
   type OwnedResource,
 } from "../stores/cluster";
 import { toast } from "../stores/toast";
+import { hiddenGuestsHint } from "../privileges";
 
 // Guests from every saved connection in one list (#24). Each row carries the
 // connection it came from, so every action routes to the owning cluster.
@@ -200,8 +201,16 @@ onMounted(refreshAllClusters);
       </tbody>
     </table>
 
+    <!-- An empty guest list is also what a token without VM.Audit sees, since
+         Proxmox omits guests rather than refusing the call (#87). -->
     <p v-else-if="connections.length > 0 && !anyLoading">
       No guests found.
+    </p>
+    <p
+      v-if="!anyLoading && failures.length === 0 && allGuests.length === 0 && connections.length > 0"
+      class="hint-block"
+    >
+      {{ hiddenGuestsHint }}
     </p>
   </div>
 </template>
@@ -215,6 +224,13 @@ onMounted(refreshAllClusters);
 
 .head h1 {
   margin-right: auto;
+}
+
+.hint-block {
+  max-width: 70ch;
+  font-size: 0.85em;
+  line-height: 1.4;
+  opacity: 0.8;
 }
 
 table {

@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from "vue";
 import UsageBar from "../components/UsageBar.vue";
 import { api, type HaStatus } from "../api";
 import { formatBytes, formatUptime, percent } from "../format";
+import { hiddenStatsHint, statsHidden } from "../privileges";
 import { connections, setActive } from "../stores/connections";
 import {
   allGuests,
@@ -159,22 +160,35 @@ onMounted(() => {
               SSH shell
             </router-link>
           </div>
-          <UsageBar
-            label="CPU"
-            :value="Math.round((n.cpu ?? 0) * 100)"
-            :detail="`${((n.cpu ?? 0) * 100).toFixed(1)}% of ${n.maxcpu ?? '?'} cores`"
-          />
-          <UsageBar
-            label="RAM"
-            :value="percent(n.mem, n.maxmem)"
-            :detail="`${formatBytes(n.mem)} / ${formatBytes(n.maxmem)}`"
-          />
-          <UsageBar
-            label="Disk"
-            :value="percent(n.disk, n.maxdisk)"
-            :detail="`${formatBytes(n.disk)} / ${formatBytes(n.maxdisk)}`"
-          />
-          <div class="meta">
+          <!-- Blank usage bars on an online node mean the token cannot read
+               them, not that the node is idle (#87). -->
+          <p
+            v-if="statsHidden(n)"
+            class="hint-block"
+          >
+            {{ hiddenStatsHint(n.node) }}
+          </p>
+          <template v-else>
+            <UsageBar
+              label="CPU"
+              :value="Math.round((n.cpu ?? 0) * 100)"
+              :detail="`${((n.cpu ?? 0) * 100).toFixed(1)}% of ${n.maxcpu ?? '?'} cores`"
+            />
+            <UsageBar
+              label="RAM"
+              :value="percent(n.mem, n.maxmem)"
+              :detail="`${formatBytes(n.mem)} / ${formatBytes(n.maxmem)}`"
+            />
+            <UsageBar
+              label="Disk"
+              :value="percent(n.disk, n.maxdisk)"
+              :detail="`${formatBytes(n.disk)} / ${formatBytes(n.maxdisk)}`"
+            />
+          </template>
+          <div
+            v-if="!statsHidden(n)"
+            class="meta"
+          >
             <span>Net in {{ formatBytes(netFor(c.id, n.node)?.netin) }}</span>
             <span>Net out {{ formatBytes(netFor(c.id, n.node)?.netout) }}</span>
             <span>Up {{ formatUptime(n.uptime) }}</span>
@@ -279,6 +293,13 @@ onMounted(() => {
 .hint {
   font-size: 0.85em;
   opacity: 0.7;
+}
+
+.hint-block {
+  margin: 0;
+  font-size: 0.85em;
+  line-height: 1.4;
+  opacity: 0.8;
 }
 
 .ok {
