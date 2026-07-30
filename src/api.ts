@@ -350,6 +350,7 @@ export interface ConsoleInfo {
 export interface DiscoveredHost {
   ip: string;
   host: string;
+  confirmed: boolean;
   version?: string | null;
 }
 
