@@ -500,6 +500,10 @@ export const api = {
     call<void>("revert_network", { connectionId, node }),
   nodeTasks: (connectionId: string, node: string) =>
     call<TaskEntry[]>("node_tasks", { connectionId, node }),
+  /** Starts an APT index refresh on the node and resolves with its task UPID.
+   * Refreshes the index only — nothing is upgraded, no service restarts. */
+  aptUpdate: (connectionId: string, node: string) =>
+    call<string>("apt_update", { connectionId, node }),
   taskStatus: (connectionId: string, node: string, upid: string) =>
     call<TaskStatus>("task_status", { connectionId, node, upid }),
   taskLog: (connectionId: string, node: string, upid: string, start?: number) =>
