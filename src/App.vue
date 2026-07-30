@@ -4,9 +4,14 @@ import { cephAvailable, probeCeph } from "./ceph";
 import ToastList from "./components/ToastList.vue";
 import { startTaskAlerts } from "./stores/alerts";
 import { nodes, refreshCluster } from "./stores/cluster";
-import { activeId } from "./stores/connections";
+import { activeId, connections, refreshConnections, setActive } from "./stores/connections";
 
 startTaskAlerts();
+
+// The connection list used to be loaded by whichever view needed it first.
+// The aggregate views and the cluster switcher below both need it before any
+// view mounts, so it is loaded here (#24).
+void refreshConnections();
 
 // Ceph is optional, so its nav entry only appears once a node answers
 // /ceph/status. Probed per connection and cached in ceph.ts.
@@ -64,6 +69,22 @@ const nav = computed(() => [
       <div class="brand">
         Proxmox Desktop
       </div>
+      <!-- Dashboard and the guest list span every cluster; the rest of the
+           views are per-cluster, and this is what picks which one (#24). -->
+      <select
+        v-if="connections.length > 1"
+        class="cluster-pick"
+        :value="activeId ?? ''"
+        @change="setActive(($event.target as HTMLSelectElement).value || null)"
+      >
+        <option
+          v-for="c in connections"
+          :key="c.id"
+          :value="c.id"
+        >
+          {{ c.name }}
+        </option>
+      </select>
       <RouterLink
         v-for="item in nav"
         :key="item.to"
@@ -113,6 +134,16 @@ const nav = computed(() => [
   color: #e57000;
   font-weight: 700;
   padding: 8px 12px 16px;
+}
+
+.cluster-pick {
+  margin: 0 4px 10px;
+  padding: 4px 6px;
+  font-size: 0.85em;
+  background: #33393f;
+  color: #cdd3d8;
+  border: 1px solid #4a5158;
+  border-radius: 6px;
 }
 
 .nav-link {
