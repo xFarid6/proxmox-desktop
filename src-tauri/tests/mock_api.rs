@@ -283,10 +283,83 @@ async fn network_interfaces_decode() {
         .mount(&server)
         .await;
 
-    let ifaces = client(&server).await.node_network("pve1").await.unwrap();
-    assert_eq!(ifaces.len(), 2);
-    assert_eq!(ifaces[0].kind, "bridge");
-    assert_eq!(ifaces[0].bridge_ports.as_deref(), Some("eno1"));
+    let net = client(&server).await.node_network("pve1").await.unwrap();
+    assert_eq!(net.interfaces.len(), 2);
+    assert_eq!(net.interfaces[0].kind, "bridge");
+    assert_eq!(net.interfaces[0].bridge_ports.as_deref(), Some("eno1"));
+    assert!(net.changes.is_none());
+}
+
+/// The `changes` field sits beside `data` in the envelope, not on each
+/// interface — this is the diff PVE reports for staged-but-unapplied edits,
+/// and it's what the apply/revert UI keys off of.
+#[tokio::test]
+async fn network_edit_crud() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api2/json/nodes/pve1/network"))
+        .respond_with(json(
+            r#"{"data":[{"iface":"vmbr1","type":"bridge","bridge_ports":"eno2","autostart":1,"mtu":9000}],"changes":"--- /etc/network/interfaces\n+++ /etc/network/interfaces.new\n+auto vmbr1\n"}"#,
+        ))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api2/json/nodes/pve1/network"))
+        .and(body_string_contains("type=bridge"))
+        .respond_with(json(r#"{"data":null}"#))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("PUT"))
+        .and(path("/api2/json/nodes/pve1/network/vmbr1"))
+        .and(body_string_contains("mtu=9000"))
+        .respond_with(json(r#"{"data":null}"#))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path("/api2/json/nodes/pve1/network/vmbr1"))
+        .respond_with(json(r#"{"data":null}"#))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("PUT"))
+        .and(path("/api2/json/nodes/pve1/network"))
+        .respond_with(json(r#"{"data":"UPID:pve1:0000:network:root@pam:"}"#))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path("/api2/json/nodes/pve1/network"))
+        .respond_with(json(r#"{"data":null}"#))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let c = client(&server).await;
+    let net = c.node_network("pve1").await.unwrap();
+    let changes = net.changes.unwrap();
+    assert!(changes.contains("vmbr1"));
+    assert_eq!(net.interfaces[0].mtu, Some(9000));
+    assert_eq!(net.interfaces[0].bridge_ports.as_deref(), Some("eno2"));
+
+    let mut params = HashMap::new();
+    params.insert("iface".to_string(), "vmbr1".to_string());
+    params.insert("type".to_string(), "bridge".to_string());
+    c.create_network_iface("pve1", &params).await.unwrap();
+
+    let mut params = HashMap::new();
+    params.insert("mtu".to_string(), "9000".to_string());
+    c.update_network_iface("pve1", "vmbr1", &params)
+        .await
+        .unwrap();
+
+    c.delete_network_iface("pve1", "vmbr1").await.unwrap();
+
+    let upid = c.apply_network("pve1").await.unwrap();
+    assert!(upid.starts_with("UPID:"));
+
+    c.revert_network("pve1").await.unwrap();
 }
 
 #[tokio::test]

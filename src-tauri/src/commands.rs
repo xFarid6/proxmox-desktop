@@ -5,8 +5,8 @@ use crate::connections::{self, ConnectionInfo};
 use crate::proxmox::types::{
     AccessDomain, AccessRole, AccessUser, AclEntry, AcmeAccountEntry, BackupJob, CephDaemonAction,
     CephPool, CephServiceKind, CertificateInfo, ClusterResource, FirewallRule, GuestKind, HaGroup,
-    HaResource, HaStatus, NetworkInterface, PowerAction, ReplicationJob, StorageConfig,
-    StorageContent, StorageSummary, TaskEntry, TaskLogLine, TaskStatus, Version,
+    HaResource, HaStatus, NodeNetwork, PowerAction, ReplicationJob, StorageConfig, StorageContent,
+    StorageSummary, TaskEntry, TaskLogLine, TaskStatus, Version,
 };
 use crate::proxmox::Client;
 use crate::scan::{self, DiscoveredHost, TailscalePeer};
@@ -158,15 +158,93 @@ pub async fn resize_disk(
         .map_err(|e| e.to_string())
 }
 
-/// Network interfaces on a node — read-only view.
+/// Network interfaces on a node, plus the pending-changes diff if any edits
+/// are staged but not yet applied.
 #[tauri::command]
 pub async fn node_network(
     app: tauri::AppHandle,
     connection_id: String,
     node: String,
-) -> Result<Vec<NetworkInterface>, String> {
+) -> Result<NodeNetwork, String> {
     let client = connections::client_for(&app, &connection_id)?;
     client.node_network(&node).await.map_err(|e| e.to_string())
+}
+
+/// Stage a new interface (bridge, bond, VLAN). Takes effect on apply.
+#[tauri::command]
+pub async fn create_network_iface(
+    app: tauri::AppHandle,
+    connection_id: String,
+    node: String,
+    params: std::collections::HashMap<String, String>,
+) -> Result<(), String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client
+        .create_network_iface(&node, &params)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+/// Replace an interface's definition. `params` must be the full definition —
+/// omitted keys are dropped from the node's config.
+#[tauri::command]
+pub async fn update_network_iface(
+    app: tauri::AppHandle,
+    connection_id: String,
+    node: String,
+    iface: String,
+    params: std::collections::HashMap<String, String>,
+) -> Result<(), String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client
+        .update_network_iface(&node, &iface, &params)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+/// Stage removal of an interface. Takes effect on apply.
+#[tauri::command]
+pub async fn delete_network_iface(
+    app: tauri::AppHandle,
+    connection_id: String,
+    node: String,
+    iface: String,
+) -> Result<(), String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client
+        .delete_network_iface(&node, &iface)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+/// Apply the staged network config (`ifreload -a`). Returns the task UPID.
+/// A bad staged config can take the node's management link down with it.
+#[tauri::command]
+pub async fn apply_network(
+    app: tauri::AppHandle,
+    connection_id: String,
+    node: String,
+) -> Result<String, String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client.apply_network(&node).await.map_err(|e| e.to_string())
+}
+
+/// Discard the staged network config, leaving the running one alone.
+#[tauri::command]
+pub async fn revert_network(
+    app: tauri::AppHandle,
+    connection_id: String,
+    node: String,
+) -> Result<(), String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client
+        .revert_network(&node)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 /// Recent tasks on a node (server-side limit 50).

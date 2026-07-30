@@ -184,6 +184,10 @@ export interface ReplicationJob {
   disable?: number;
 }
 
+/** One entry from `/nodes/{node}/network`. Everything past `type` is
+ * type-dependent and optional — and all of it is declared because
+ * `update_network_iface` replaces the definition wholesale, so a field the
+ * edit form cannot see is a field the next save drops. */
 export interface NetworkInterface {
   iface: string;
   type: string;
@@ -192,9 +196,27 @@ export interface NetworkInterface {
   netmask?: string;
   cidr?: string;
   gateway?: string;
+  cidr6?: string;
+  gateway6?: string;
   bridge_ports?: string;
+  bridge_vlan_aware?: number;
+  slaves?: string;
+  bond_mode?: string;
+  bond_xmit_hash_policy?: string;
+  "vlan-id"?: number;
+  "vlan-raw-device"?: string;
+  mtu?: number;
+  comments?: string;
   active?: number;
   autostart?: number;
+}
+
+/** `/nodes/{node}/network` in full. PVE stages edits in
+ * `/etc/network/interfaces.new`; `changes` is the diff against the live file,
+ * and is null when nothing is pending. */
+export interface NodeNetwork {
+  interfaces: NetworkInterface[];
+  changes: string | null;
 }
 
 /** A guest under HA. `sid` is the HA service id, "qemu:100" / "lxc:101". */
@@ -440,7 +462,25 @@ export const api = {
     size: string,
   ) => invoke<string | null>("resize_disk", { connectionId, node, kind, vmid, disk, size }),
   nodeNetwork: (connectionId: string, node: string) =>
-    invoke<NetworkInterface[]>("node_network", { connectionId, node }),
+    invoke<NodeNetwork>("node_network", { connectionId, node }),
+  createNetworkIface: (connectionId: string, node: string, params: Record<string, string>) =>
+    invoke<void>("create_network_iface", { connectionId, node, params }),
+  /** `params` must be the interface's full definition — PVE drops any key the
+   * body leaves out. */
+  updateNetworkIface: (
+    connectionId: string,
+    node: string,
+    iface: string,
+    params: Record<string, string>,
+  ) => invoke<void>("update_network_iface", { connectionId, node, iface, params }),
+  deleteNetworkIface: (connectionId: string, node: string, iface: string) =>
+    invoke<void>("delete_network_iface", { connectionId, node, iface }),
+  /** Runs `ifreload -a` on the node and returns the task UPID. Can drop the
+   * management link if the staged config is wrong. */
+  applyNetwork: (connectionId: string, node: string) =>
+    invoke<string>("apply_network", { connectionId, node }),
+  revertNetwork: (connectionId: string, node: string) =>
+    invoke<void>("revert_network", { connectionId, node }),
   nodeTasks: (connectionId: string, node: string) =>
     invoke<TaskEntry[]>("node_tasks", { connectionId, node }),
   taskStatus: (connectionId: string, node: string, upid: string) =>
