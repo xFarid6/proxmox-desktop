@@ -1,9 +1,14 @@
 use serde::{Deserialize, Serialize};
 
 /// Wrapper every Proxmox API response uses: `{"data": ...}`.
+///
+/// A few endpoints hang extra attributes off the envelope beside `data`.
+/// `changes` is the only one this app reads — see `Client::node_network`.
 #[derive(Debug, Deserialize)]
 pub struct ApiResponse<T> {
     pub data: T,
+    #[serde(default)]
+    pub changes: Option<String>,
 }
 
 /// One entry from `GET /cluster/resources`. Fields vary by `type`
@@ -119,6 +124,11 @@ pub struct TaskStatus {
 }
 
 /// One entry from `GET /nodes/{node}/network`.
+///
+/// Every field past `kind` is optional and type-dependent. They are all
+/// declared because `PUT /nodes/{node}/network/{iface}` *replaces* the
+/// interface definition with whatever the body carries — a field the edit
+/// form cannot see is a field the next save silently drops.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetworkInterface {
     pub iface: String,
@@ -129,9 +139,30 @@ pub struct NetworkInterface {
     pub netmask: Option<String>,
     pub cidr: Option<String>,
     pub gateway: Option<String>,
+    pub cidr6: Option<String>,
+    pub gateway6: Option<String>,
     pub bridge_ports: Option<String>,
+    pub bridge_vlan_aware: Option<u8>,
+    pub slaves: Option<String>,
+    pub bond_mode: Option<String>,
+    pub bond_xmit_hash_policy: Option<String>,
+    #[serde(rename = "vlan-id")]
+    pub vlan_id: Option<u32>,
+    #[serde(rename = "vlan-raw-device")]
+    pub vlan_raw_device: Option<String>,
+    pub mtu: Option<u32>,
+    pub comments: Option<String>,
     pub active: Option<u8>,
     pub autostart: Option<u8>,
+}
+
+/// `GET /nodes/{node}/network` in full: the interface list plus the diff of
+/// any edits staged in `/etc/network/interfaces.new`. `changes` is None when
+/// nothing is pending — that is the signal the Apply/Revert controls key off.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeNetwork {
+    pub interfaces: Vec<NetworkInterface>,
+    pub changes: Option<String>,
 }
 
 /// One entry from `GET /nodes/{node}/storage/{storage}/content`.
