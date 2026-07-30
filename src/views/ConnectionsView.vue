@@ -3,6 +3,7 @@ import { onMounted, reactive, ref } from "vue";
 import { api, type ConnectionInfo, type DiscoveredHost, type TailscalePeer } from "../api";
 import { activeId, connections, refreshConnections, setActive } from "../stores/connections";
 import { toast } from "../stores/toast";
+import { joinToken, tokenProblem } from "../token";
 
 const editing = ref(false);
 const testResult = ref("");
@@ -17,7 +18,8 @@ const blank = () => ({
   id: "",
   name: "",
   host: "",
-  token: "",
+  tokenId: "",
+  tokenSecret: "",
   acceptInvalidCerts: false,
   sshEnabled: false,
   sshUser: "",
@@ -41,7 +43,8 @@ function startEdit(c: ConnectionInfo) {
     name: c.name,
     host: c.host,
     acceptInvalidCerts: c.acceptInvalidCerts,
-    token: "",
+    tokenId: "",
+    tokenSecret: "",
     sshEnabled: !!c.ssh,
     sshUser: c.ssh?.user ?? "",
     sshPort: c.ssh?.port ?? 22,
@@ -55,13 +58,20 @@ function startEdit(c: ConnectionInfo) {
 }
 
 async function test() {
+  // The Test button is type="button", so the browser's own required-field
+  // check never runs for it — the pair has to be checked here too.
+  const problem = tokenProblem(form.tokenId, form.tokenSecret);
+  if (problem) {
+    error.value = problem;
+    return;
+  }
   busy.value = true;
   testResult.value = "";
   error.value = "";
   try {
     const v = await api.testConnection({
       host: form.host,
-      token: form.token || undefined,
+      token: joinToken(form.tokenId, form.tokenSecret) || undefined,
       acceptInvalidCerts: form.acceptInvalidCerts,
       connectionId: form.id || undefined,
     });
@@ -75,6 +85,11 @@ async function test() {
 }
 
 async function save() {
+  const problem = tokenProblem(form.tokenId, form.tokenSecret);
+  if (problem) {
+    error.value = problem;
+    return;
+  }
   busy.value = true;
   error.value = "";
   try {
@@ -93,7 +108,11 @@ async function save() {
         : null,
     };
     const sshSecret = form.sshEnabled && form.sshAuth !== "agent" ? form.sshSecret : undefined;
-    await api.saveConnection(info, form.token || undefined, sshSecret || undefined);
+    await api.saveConnection(
+      info,
+      joinToken(form.tokenId, form.tokenSecret) || undefined,
+      sshSecret || undefined,
+    );
     editing.value = false;
     toast("Connection saved");
     await refreshConnections();
@@ -299,13 +318,27 @@ onMounted(refreshConnections);
           required
         >
       </label>
+      <!-- Two fields, matching the two values Proxmox's token dialog shows.
+           The ID is not secret and stays readable so a typo in it is visible;
+           only the secret is masked (#86). -->
       <label>
-        API token
+        Token ID
         <input
-          v-model="form.token"
-          type="password"
-          :placeholder="form.id ? '(unchanged)' : 'user@realm!tokenid=uuid'"
+          v-model="form.tokenId"
+          :placeholder="form.id ? '(unchanged)' : 'root@pam!desktop'"
           :required="!form.id"
+          autocomplete="off"
+          spellcheck="false"
+        >
+      </label>
+      <label>
+        Secret
+        <input
+          v-model="form.tokenSecret"
+          type="password"
+          :placeholder="form.id ? '(unchanged)' : 'the UUID shown when the token was created'"
+          :required="!form.id && !form.tokenId.includes('=')"
+          autocomplete="off"
         >
       </label>
       <label class="check">
