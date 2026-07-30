@@ -32,3 +32,6 @@ dist-ssr/
 # Claude Code local
 .claude/
 
+
+# graphify knowledge-graph output (regenerable, not source)
+graphify-out/
