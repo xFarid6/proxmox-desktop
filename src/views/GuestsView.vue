@@ -1,53 +1,107 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { api, type ClusterResource, type PowerAction } from "../api";
+import { api, type PowerAction } from "../api";
 import { formatBytes, percent } from "../format";
-import { activeId } from "../stores/connections";
-import { error, guests, loading, refreshCluster } from "../stores/cluster";
+import { connections, setActive } from "../stores/connections";
+import {
+  allGuests,
+  clusterList,
+  multiCluster,
+  refreshAllClusters,
+  type OwnedResource,
+} from "../stores/cluster";
 import { toast } from "../stores/toast";
 
+// Guests from every saved connection in one list (#24). Each row carries the
+// connection it came from, so every action routes to the owning cluster.
+
+const clusterFilter = ref("");
 const nodeFilter = ref("");
-const pending = ref(new Set<number>());
+/** Keyed by connection + vmid: vmids are unique within a cluster, not across. */
+const pending = ref(new Set<string>());
+
+const anyLoading = computed(() => clusterList.value.some((c) => c.loading));
+/** Per-cluster failures — one unreachable cluster must not hide the others. */
+const failures = computed(() => clusterList.value.filter((c) => c.error));
 
 const nodeNames = computed(() =>
-  [...new Set(guests.value.map((g) => g.node).filter(Boolean))].sort(),
+  [
+    ...new Set(
+      allGuests.value
+        .filter((g) => !clusterFilter.value || g.connectionId === clusterFilter.value)
+        .map((g) => g.node)
+        .filter(Boolean),
+    ),
+  ].sort(),
 );
 
 const filtered = computed(() =>
-  guests.value
+  allGuests.value
+    .filter((g) => !clusterFilter.value || g.connectionId === clusterFilter.value)
     .filter((g) => !nodeFilter.value || g.node === nodeFilter.value)
-    .sort((a, b) => (a.vmid ?? 0) - (b.vmid ?? 0)),
+    .sort(
+      (a, b) =>
+        a.clusterName.localeCompare(b.clusterName) || (a.vmid ?? 0) - (b.vmid ?? 0),
+    ),
 );
 
-function actionsFor(g: ClusterResource): PowerAction[] {
+function key(g: OwnedResource): string {
+  return `${g.connectionId} ${g.vmid}`;
+}
+
+function actionsFor(g: OwnedResource): PowerAction[] {
   if (g.template) return [];
   return g.status === "running" ? ["shutdown", "reboot", "stop"] : ["start"];
 }
 
-async function power(g: ClusterResource, action: PowerAction) {
-  if (!activeId.value || !g.node || g.vmid == null) return;
-  pending.value = new Set(pending.value).add(g.vmid);
+/** The guest detail view resolves its route against the active connection, so
+ * opening a guest from another cluster has to switch to it first. */
+function open(g: OwnedResource) {
+  setActive(g.connectionId);
+}
+
+async function power(g: OwnedResource, action: PowerAction) {
+  if (!g.node || g.vmid == null) return;
+  pending.value = new Set(pending.value).add(key(g));
   try {
-    await api.guestPower(activeId.value, g.node, g.type as "qemu" | "lxc", g.vmid, action);
-    toast(`${action} sent to ${g.vmid}`);
+    await api.guestPower(g.connectionId, g.node, g.type as "qemu" | "lxc", g.vmid, action);
+    toast(`${action} sent to ${g.vmid} on ${g.clusterName}`);
     // Status flips async on the server; refresh shortly after.
-    setTimeout(refreshCluster, 1500);
+    setTimeout(() => void refreshAllClusters(), 1500);
   } catch (e) {
     toast(String(e), "error");
   } finally {
     const next = new Set(pending.value);
-    next.delete(g.vmid);
+    next.delete(key(g));
     pending.value = next;
   }
 }
 
-onMounted(refreshCluster);
+onMounted(refreshAllClusters);
 </script>
 
 <template>
   <div>
     <div class="head">
       <h1>VMs &amp; Containers</h1>
+      <label v-if="multiCluster">
+        Cluster
+        <select
+          v-model="clusterFilter"
+          @change="nodeFilter = ''"
+        >
+          <option value="">
+            all
+          </option>
+          <option
+            v-for="c in clusterList"
+            :key="c.id"
+            :value="c.id"
+          >
+            {{ c.name }}
+          </option>
+        </select>
+      </label>
       <label v-if="nodeNames.length > 1">
         Node
         <select v-model="nodeFilter">
@@ -63,7 +117,7 @@ onMounted(refreshCluster);
           </option>
         </select>
       </label>
-      <button @click="refreshCluster">
+      <button @click="refreshAllClusters">
         Refresh
       </button>
       <router-link to="/guests/new">
@@ -71,24 +125,30 @@ onMounted(refreshCluster);
       </router-link>
     </div>
 
-    <p v-if="!activeId">
-      No active connection. Add one under Connections.
+    <p v-if="connections.length === 0">
+      No connections yet. Add one under Connections.
     </p>
-    <p v-else-if="loading">
+    <p v-else-if="anyLoading && filtered.length === 0">
       Loading…
     </p>
+
     <p
-      v-else-if="error"
+      v-for="c in failures"
+      :key="c.id"
       class="error"
     >
-      {{ error }}
+      {{ c.name }}: {{ c.error }}
     </p>
+
     <table
-      v-if="activeId && !loading && filtered.length > 0"
+      v-if="filtered.length > 0"
       v-cards
     >
       <thead>
         <tr>
+          <th v-if="multiCluster">
+            Cluster
+          </th>
           <th>ID</th>
           <th>Name</th>
           <th>Type</th>
@@ -102,11 +162,17 @@ onMounted(refreshCluster);
       <tbody>
         <tr
           v-for="g in filtered"
-          :key="g.id"
+          :key="`${g.connectionId} ${g.id}`"
         >
+          <td v-if="multiCluster">
+            {{ g.clusterName }}
+          </td>
           <td>{{ g.vmid }}</td>
           <td>
-            <router-link :to="`/guests/${g.node}/${g.type}/${g.vmid}`">
+            <router-link
+              :to="`/guests/${g.node}/${g.type}/${g.vmid}`"
+              @click="open(g)"
+            >
               {{ g.name ?? g.vmid }}
             </router-link>
           </td>
@@ -124,7 +190,7 @@ onMounted(refreshCluster);
             <button
               v-for="a in actionsFor(g)"
               :key="a"
-              :disabled="pending.has(g.vmid ?? -1)"
+              :disabled="pending.has(key(g))"
               @click="power(g, a)"
             >
               {{ a }}
@@ -134,7 +200,7 @@ onMounted(refreshCluster);
       </tbody>
     </table>
 
-    <p v-else-if="activeId && !loading && !error">
+    <p v-else-if="connections.length > 0 && !anyLoading">
       No guests found.
     </p>
   </div>
