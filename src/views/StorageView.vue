@@ -238,9 +238,22 @@ watch(activeId, refresh);
           </tr>
         </tbody>
       </table>
-      <p v-else-if="!loading">
-        No storage definitions.
-      </p>
+      <!-- Not an error state, but "No storage definitions" on its own leaves
+           the user unable to tell it apart from a failure (#91). -->
+      <template v-else-if="!loading">
+        <p>
+          No storage definitions on this cluster.
+        </p>
+        <p class="hint-block">
+          Storages are defined for the whole datacenter rather than per node, and having none
+          is legal — but unusual: a stock Proxmox install defines <code>local</code>, and
+          <code>local-lvm</code> as well on an LVM install. So an empty list normally means one
+          of two things: they were removed by hand, or this connection's API token cannot see
+          them. Proxmox omits storages a token may not read rather than refusing the request,
+          so a privilege gap looks exactly like this. Add one with the form above, or check the
+          token's Datastore.Audit privilege under Datacenter → Permissions.
+        </p>
+      </template>
     </template>
   </div>
 </template>
@@ -291,6 +304,18 @@ td {
   text-align: left;
   padding: 6px 10px;
   border-bottom: 1px solid #ccc3;
+}
+
+.hint-block {
+  max-width: 70ch;
+  font-size: 0.85em;
+  line-height: 1.5;
+  opacity: 0.8;
+}
+
+.hint-block code {
+  font-size: 0.95em;
+  opacity: 0.9;
 }
 
 .content-cell {

@@ -36,6 +36,7 @@ commands (all read-only, print pretty JSON to stdout):\n\
   storages <node>\n\
   tasks <node>\n\
   permissions       -- what this token itself may do, per path\n\
+  storage-configs   -- datacenter-wide storage definitions\n\
   scan-lan          -- no credentials needed\n\
   scan-tailscale    -- no credentials needed\n\
 \n\
@@ -66,6 +67,7 @@ enum Command {
         node: String,
     },
     Permissions,
+    StorageConfigs,
     ScanLan,
     ScanTailscale,
 }
@@ -110,6 +112,7 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
             node: args.get(1).ok_or("tasks: missing <node>")?.clone(),
         }),
         "permissions" => Ok(Command::Permissions),
+        "storage-configs" => Ok(Command::StorageConfigs),
         "scan-lan" => Ok(Command::ScanLan),
         "scan-tailscale" => Ok(Command::ScanTailscale),
         other => Err(format!("unknown command '{other}'\n\n{}", usage())),
@@ -174,6 +177,12 @@ async fn run(command: Command) -> Result<(), String> {
                 .await
                 .map_err(|e| e.to_string())?,
         ),
+        Command::StorageConfigs => print_json(
+            &build_client()?
+                .storage_configs()
+                .await
+                .map_err(|e| e.to_string())?,
+        ),
         Command::Tasks { node } => print_json(
             &build_client()?
                 .node_tasks(&node)
@@ -227,5 +236,10 @@ mod tests {
         let missing_args = parse_args(&["guest-config".to_string()]);
         assert!(missing_args.is_err());
         assert!(missing_args.unwrap_err().contains("missing <node>"));
+
+        // Argument-less subcommands are the easiest to leave unwired — the enum
+        // variant and the match arm are edited in two separate places.
+        assert!(parse_args(&["storage-configs".to_string()]).is_ok());
+        assert!(parse_args(&["permissions".to_string()]).is_ok());
     }
 }
