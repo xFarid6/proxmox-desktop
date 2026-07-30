@@ -2,8 +2,11 @@
 //! dependency. Two independent sources:
 //!
 //! - `scan_lan`: probe the local subnet(s) on the Proxmox web UI port
-//!   (8006), then confirm each open port really is a PVE API via its
-//!   unauthenticated `/api2/json/version` endpoint.
+//!   (8006), then confirm each open port really is a PVE API by its
+//!   `Server: pve-api-daemon` response header. Some PVE versions answer
+//!   `/api2/json/version` unauthenticated with the release number; others
+//!   (verified live — see #75) return 401 for it, so the header is the
+//!   only confirmation signal that isn't version-dependent.
 //! - `scan_tailscale`: shell out to `tailscale status --json` and list
 //!   tailnet peers as connect candidates.
 
@@ -17,7 +20,10 @@ use tokio::time::timeout;
 
 const PVE_PORT: u16 = 8006;
 const PROBE_TIMEOUT: Duration = Duration::from_millis(400);
-const VERSION_TIMEOUT: Duration = Duration::from_secs(2);
+/// Generous: PVE's anonymous-path TLS handshake does an extra
+/// renegotiation round-trip (verified live — see #75), so a request that
+/// would be instant if authenticated can take noticeably longer here.
+const VERSION_TIMEOUT: Duration = Duration::from_secs(6);
 const CONCURRENCY: usize = 64;
 /// Skip any interface whose subnet is bigger than a /22 (1024 addresses) —
 /// a misconfigured netmask shouldn't turn this into a scan of the internet.
@@ -29,8 +35,10 @@ pub struct DiscoveredHost {
     pub ip: String,
     /// Ready to paste into the add-connection form.
     pub host: String,
-    /// Set only when `/api2/json/version` answered — `None` means the port
-    /// was open but it didn't look like a PVE API.
+    /// True when the `Server` header identified this as a PVE API daemon —
+    /// independent of whether `version` below could be read.
+    pub confirmed: bool,
+    /// The PVE release, when the version endpoint answered it without auth.
     pub version: Option<String>,
 }
 
@@ -92,32 +100,52 @@ async fn probe(ip: Ipv4Addr) -> Option<DiscoveredHost> {
         .ok()?
         .ok()?;
     let host = format!("https://{ip}:{PVE_PORT}");
-    let version = probe_version(&host).await;
+    let (confirmed, version) = probe_pve(&host).await;
     Some(DiscoveredHost {
         ip: ip.to_string(),
         host,
+        confirmed,
         version,
     })
 }
 
-/// PVE's `/version` endpoint answers unauthenticated, so a plain GET
-/// distinguishes "this is Proxmox" from "something else is on 8006".
-async fn probe_version(host: &str) -> Option<String> {
-    let client = reqwest::Client::builder()
+/// Confirms via the `Server` response header (present whether or not the
+/// request needed auth), and separately tries to read the release number,
+/// which only some PVE versions expose without a ticket.
+async fn probe_pve(host: &str) -> (bool, Option<String>) {
+    let Ok(client) = reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
         .timeout(VERSION_TIMEOUT)
         .build()
-        .ok()?;
-    let resp = client
-        .get(format!("{host}/api2/json/version"))
-        .send()
-        .await
-        .ok()?;
-    let body: serde_json::Value = resp.json().await.ok()?;
-    body.get("data")?
-        .get("version")?
-        .as_str()
-        .map(str::to_string)
+    else {
+        return (false, None);
+    };
+    let Ok(resp) = client.get(format!("{host}/api2/json/version")).send().await else {
+        return (false, None);
+    };
+
+    let confirmed = resp
+        .headers()
+        .get(reqwest::header::SERVER)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|s| s.starts_with("pve-api-daemon"));
+    let is_success = resp.status().is_success();
+
+    let version = if is_success {
+        resp.json::<serde_json::Value>()
+            .await
+            .ok()
+            .and_then(|body| {
+                body.get("data")?
+                    .get("version")?
+                    .as_str()
+                    .map(str::to_string)
+            })
+    } else {
+        None
+    };
+
+    (confirmed, version)
 }
 
 /// Blocks briefly on a local CLI call (near-instant, no network wait) —

@@ -201,7 +201,9 @@ onMounted(refreshConnections);
           >
             <div>
               <strong>{{ host.ip }}</strong>
-              <span class="result-detail">{{ host.version ? `v${host.version}` : "unconfirmed" }}</span>
+              <span class="result-detail">{{
+                host.version ? `Proxmox VE ${host.version}` : host.confirmed ? "Proxmox (login required)" : "unconfirmed"
+              }}</span>
             </div>
           </div>
         </div>

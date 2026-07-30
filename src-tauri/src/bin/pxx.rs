@@ -23,6 +23,7 @@
 
 use proxmox_desktop_lib::proxmox::types::GuestKind;
 use proxmox_desktop_lib::proxmox::Client;
+use proxmox_desktop_lib::scan;
 
 fn usage() -> &'static str {
     "usage: pxx <command> [args]\n\
@@ -34,6 +35,8 @@ commands (all read-only, print pretty JSON to stdout):\n\
   node-network <node>\n\
   storages <node>\n\
   tasks <node>\n\
+  scan-lan          -- no credentials needed\n\
+  scan-tailscale    -- no credentials needed\n\
 \n\
 env (credentials only -- never passed as flags):\n\
   PXX_HOST      e.g. https://100.80.231.52:8006\n\
@@ -61,6 +64,8 @@ enum Command {
     Tasks {
         node: String,
     },
+    ScanLan,
+    ScanTailscale,
 }
 
 fn parse_guest_kind(s: &str) -> Result<GuestKind, String> {
@@ -102,6 +107,8 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
         "tasks" => Ok(Command::Tasks {
             node: args.get(1).ok_or("tasks: missing <node>")?.clone(),
         }),
+        "scan-lan" => Ok(Command::ScanLan),
+        "scan-tailscale" => Ok(Command::ScanTailscale),
         other => Err(format!("unknown command '{other}'\n\n{}", usage())),
     }
 }
@@ -128,36 +135,42 @@ fn print_json<T: serde::Serialize>(value: &T) -> Result<(), String> {
 }
 
 async fn run(command: Command) -> Result<(), String> {
-    let client = build_client()?;
     match command {
-        Command::Version => print_json(&client.version().await.map_err(|e| e.to_string())?),
+        Command::ScanLan => print_json(&scan::scan_lan().await?),
+        Command::ScanTailscale => print_json(&scan::scan_tailscale().await?),
+        Command::Version => {
+            print_json(&build_client()?.version().await.map_err(|e| e.to_string())?)
+        }
         Command::Resources => print_json(
-            &client
+            &build_client()?
                 .cluster_resources()
                 .await
                 .map_err(|e| e.to_string())?,
         ),
         Command::GuestConfig { node, kind, vmid } => print_json(
-            &client
+            &build_client()?
                 .guest_config(&node, kind, vmid)
                 .await
                 .map_err(|e| e.to_string())?,
         ),
         Command::NodeNetwork { node } => print_json(
-            &client
+            &build_client()?
                 .node_network(&node)
                 .await
                 .map_err(|e| e.to_string())?,
         ),
         Command::Storages { node } => print_json(
-            &client
+            &build_client()?
                 .node_storages(&node)
                 .await
                 .map_err(|e| e.to_string())?,
         ),
-        Command::Tasks { node } => {
-            print_json(&client.node_tasks(&node).await.map_err(|e| e.to_string())?)
-        }
+        Command::Tasks { node } => print_json(
+            &build_client()?
+                .node_tasks(&node)
+                .await
+                .map_err(|e| e.to_string())?,
+        ),
     }
 }
 
