@@ -40,7 +40,9 @@ impl Client {
         format!("{}/api2/json{}", self.base_url, path)
     }
 
-    async fn decode<T: DeserializeOwned>(resp: reqwest::Response) -> Result<T> {
+    async fn decode_envelope<T: DeserializeOwned>(
+        resp: reqwest::Response,
+    ) -> Result<ApiResponse<T>> {
         let status = resp.status();
         let body = resp.text().await?;
         if !status.is_success() {
@@ -49,9 +51,11 @@ impl Client {
                 message: body,
             });
         }
-        let wrapped: ApiResponse<T> =
-            serde_json::from_str(&body).map_err(|e| Error::Decode(e.to_string()))?;
-        Ok(wrapped.data)
+        serde_json::from_str(&body).map_err(|e| Error::Decode(e.to_string()))
+    }
+
+    async fn decode<T: DeserializeOwned>(resp: reqwest::Response) -> Result<T> {
+        Ok(Self::decode_envelope::<T>(resp).await?.data)
     }
 
     async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
@@ -62,6 +66,17 @@ impl Client {
             .send()
             .await?;
         Self::decode(resp).await
+    }
+
+    /// Same as `get` but keeps the envelope's sibling attributes.
+    async fn get_envelope<T: DeserializeOwned>(&self, path: &str) -> Result<ApiResponse<T>> {
+        let resp = self
+            .http
+            .get(self.url(path))
+            .header("Authorization", &self.auth_header)
+            .send()
+            .await?;
+        Self::decode_envelope(resp).await
     }
 
     async fn post<T: DeserializeOwned>(
@@ -119,8 +134,65 @@ impl Client {
         self.get("/nodes").await
     }
 
-    pub async fn node_network(&self, node: &str) -> Result<Vec<NetworkInterface>> {
-        self.get(&format!("/nodes/{node}/network")).await
+    /// Interfaces on a node, plus the diff of any staged-but-unapplied edits.
+    ///
+    /// PVE never edits `/etc/network/interfaces` in place: writes land in
+    /// `interfaces.new` and the index reports the diff against the live file
+    /// as a `changes` attribute *beside* `data`. The whole apply/revert model
+    /// hangs off that field, which is why this endpoint reads the envelope.
+    pub async fn node_network(&self, node: &str) -> Result<NodeNetwork> {
+        let env = self
+            .get_envelope::<Vec<NetworkInterface>>(&format!("/nodes/{node}/network"))
+            .await?;
+        Ok(NodeNetwork {
+            interfaces: env.data,
+            changes: env.changes,
+        })
+    }
+
+    /// Stage a new interface. Params are Proxmox's own: `iface`, `type`, then
+    /// whatever that type takes — `bridge_ports`, `slaves`/`bond_mode`,
+    /// `vlan-id`/`vlan-raw-device`, `cidr`, `gateway`, `mtu`, `autostart`.
+    /// Nothing reaches the running system until `apply_network`.
+    pub async fn create_network_iface(
+        &self,
+        node: &str,
+        params: &HashMap<String, String>,
+    ) -> Result<serde_json::Value> {
+        self.post(&format!("/nodes/{node}/network"), params).await
+    }
+
+    /// Replace an interface's definition. `type` is required here as well as
+    /// on create — PVE validates the body against the declared type rather
+    /// than inferring it. Keys absent from `params` are dropped from the
+    /// config, so callers must send the full definition, not a delta.
+    pub async fn update_network_iface(
+        &self,
+        node: &str,
+        iface: &str,
+        params: &HashMap<String, String>,
+    ) -> Result<serde_json::Value> {
+        self.put(&format!("/nodes/{node}/network/{iface}"), params)
+            .await
+    }
+
+    /// Stage removal of an interface.
+    pub async fn delete_network_iface(&self, node: &str, iface: &str) -> Result<serde_json::Value> {
+        self.delete_req(&format!("/nodes/{node}/network/{iface}"))
+            .await
+    }
+
+    /// Apply the staged config — `ifreload -a` on the node, as a task, so the
+    /// UPID comes back. This is the call that can cut the management link if
+    /// the staged config is wrong; the caller warns first.
+    pub async fn apply_network(&self, node: &str) -> Result<String> {
+        self.put(&format!("/nodes/{node}/network"), &HashMap::new())
+            .await
+    }
+
+    /// Discard the staged config. The running config is untouched either way.
+    pub async fn revert_network(&self, node: &str) -> Result<serde_json::Value> {
+        self.delete_req(&format!("/nodes/{node}/network")).await
     }
 
     pub async fn node_storages(&self, node: &str) -> Result<Vec<StorageSummary>> {
