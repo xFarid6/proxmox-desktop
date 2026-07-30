@@ -3,6 +3,7 @@ import { onMounted, ref, watch } from "vue";
 import { api, type TaskEntry, type TaskLogLine } from "../api";
 import { activeId } from "../stores/connections";
 import { nodes, refreshCluster } from "../stores/cluster";
+import { hiddenTasksHint } from "../privileges";
 
 const node = ref("");
 const tasks = ref<TaskEntry[]>([]);
@@ -135,9 +136,16 @@ watch(activeId, () => {
           </tr>
         </tbody>
       </table>
-      <p v-else-if="node">
-        No tasks on {{ node }}.
-      </p>
+      <!-- Also what a token without Sys.Audit on the node sees: Proxmox
+           returns an empty log rather than a 403 (#87). -->
+      <template v-else-if="node">
+        <p>
+          No tasks on {{ node }}.
+        </p>
+        <p class="hint-block">
+          {{ hiddenTasksHint }}
+        </p>
+      </template>
 
       <div
         v-if="selected"
@@ -176,6 +184,13 @@ watch(activeId, () => {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.hint-block {
+  max-width: 70ch;
+  font-size: 0.85em;
+  line-height: 1.4;
+  opacity: 0.8;
 }
 
 table {
