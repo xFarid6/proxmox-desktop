@@ -179,6 +179,15 @@ onMounted(refreshConnections);
           {{ scanning ? "Scanning..." : "Scan for hosts" }}
         </button>
 
+        <!-- A value-less <progress> is the platform's own indeterminate bar:
+             the LAN sweep has no countable progress to report, and this needs
+             no animation, no component and no accessibility work of ours
+             (#84). -->
+        <progress
+          v-if="scanning"
+          class="busy"
+        />
+
         <p
           v-if="scanError"
           class="scan-message"
@@ -390,6 +399,19 @@ onMounted(refreshConnections);
           Cancel
         </button>
       </div>
+
+      <!-- An unreachable host takes the full 10s connect timeout to fail, so
+           two disabled buttons on their own read as a frozen window (#85). -->
+      <progress
+        v-if="busy"
+        class="busy"
+      />
+      <p
+        v-if="busy"
+        class="hint"
+      >
+        Contacting {{ form.host || "the host" }}…
+      </p>
     </form>
   </div>
 </template>
@@ -478,6 +500,20 @@ onMounted(refreshConnections);
 .scan-message {
   color: #999;
   font-size: 0.9em;
+  margin: 0;
+}
+
+/* Full width and thin; the browser draws and animates the indeterminate
+   stripe itself. accent-color tints it to match the app's orange. */
+.busy {
+  width: 100%;
+  height: 4px;
+  accent-color: #e57000;
+}
+
+.hint {
+  font-size: 0.85em;
+  opacity: 0.7;
   margin: 0;
 }
 
