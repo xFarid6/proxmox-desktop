@@ -43,6 +43,37 @@ async function openTask(t: TaskEntry) {
   }
 }
 
+/** Start a task from this tab (#88).
+ *
+ * "Create a task" is not a Proxmox concept — a task is what an action leaves
+ * behind, and there is no endpoint that makes one for its own sake. An APT
+ * index refresh is the closest honest thing: node-scoped like this tab, it
+ * changes nothing but the package index, and it is by some distance the most
+ * common entry in a real node's task log. Every other task-producing call in
+ * the client either belongs to another tab (backup, power, create) or can take
+ * the node's network down (`apply_network`).
+ *
+ * The new task is selected straight away so its log is on screen while it
+ * runs, which is the point of starting it from here.
+ */
+const starting = ref(false);
+
+async function startAptUpdate() {
+  if (!activeId.value || !node.value) return;
+  starting.value = true;
+  try {
+    const upid = await api.aptUpdate(activeId.value, node.value);
+    await refreshTasks();
+    const started = tasks.value.find((t) => t.upid === upid);
+    if (started) await openTask(started);
+    else selected.value = { upid, node: node.value, type: "aptupdate" };
+  } catch (e) {
+    error.value = String(e);
+  } finally {
+    starting.value = false;
+  }
+}
+
 function taskResult(t: TaskEntry): string {
   if (!t.endtime) return "running";
   return t.status ?? "—";
@@ -83,6 +114,13 @@ watch(activeId, () => {
       </label>
       <button @click="refreshTasks">
         Refresh
+      </button>
+      <button
+        :disabled="starting || !node"
+        :title="`Runs apt update on ${node || 'the node'} as a Proxmox task. Refreshes the package index only — installs nothing.`"
+        @click="startAptUpdate"
+      >
+        {{ starting ? "Starting…" : "Refresh package index" }}
       </button>
     </div>
 

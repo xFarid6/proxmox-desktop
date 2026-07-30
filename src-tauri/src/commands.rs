@@ -258,6 +258,18 @@ pub async fn node_tasks(
     client.node_tasks(&node).await.map_err(|e| e.to_string())
 }
 
+/// Start an APT index refresh on the node and return its task UPID. Changes
+/// only the package index — nothing is upgraded and no service restarts.
+#[tauri::command]
+pub async fn apt_update(
+    app: tauri::AppHandle,
+    connection_id: String,
+    node: String,
+) -> Result<String, String> {
+    let client = connections::client_for(&app, &connection_id)?;
+    client.apt_update(&node).await.map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub async fn task_status(
     app: tauri::AppHandle,
