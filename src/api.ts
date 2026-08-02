@@ -57,6 +57,28 @@ export interface DockerContainer {
 
 export type DockerAction = "start" | "stop" | "restart";
 
+/** A listening socket on a plain SSH host, from its `ss` output (#104).
+ * `process`/`pid` are null when the SSH user is not root — `ss` omits the
+ * owning process for sockets it does not own, which is normal, not an error.
+ * `address` is verbatim: `0.0.0.0`, `[::]`, `*`, or a specific address. */
+export interface ListeningPort {
+  proto: string;
+  address: string;
+  port: number;
+  process: string | null;
+  pid: number | null;
+}
+
+/** A systemd service unit. `active` is the high-level state
+ * ("active"/"failed"), `sub` the detailed one ("running"/"failed"). */
+export interface ServiceUnit {
+  name: string;
+  load: string;
+  active: string;
+  sub: string;
+  description: string;
+}
+
 export interface ClusterResource {
   id: string;
   type: "node" | "qemu" | "lxc" | "storage";
@@ -466,6 +488,12 @@ export const api = {
     container: string,
     tail: number,
   ) => call<string>("docker_logs", { connectionId, kind, vmid, container, tail }),
+  /** Listening ports on an SSH host. `null` means the host has no `ss`. */
+  hostPorts: (connectionId: string) =>
+    call<ListeningPort[] | null>("host_ports", { connectionId }),
+  /** Running and failed units on an SSH host. `null` means no `systemctl`. */
+  hostServices: (connectionId: string) =>
+    call<ServiceUnit[] | null>("host_services", { connectionId }),
   guestConfig: (connectionId: string, node: string, kind: GuestKind, vmid: number) =>
     call<Record<string, unknown>>("guest_config", { connectionId, node, kind, vmid }),
   setGuestConfig: (

@@ -4,6 +4,7 @@ pub mod commands;
 pub mod connections;
 pub mod console;
 pub mod docker;
+pub mod host;
 pub mod known_hosts;
 pub mod proxmox;
 pub mod scan;
@@ -96,6 +97,8 @@ pub fn run() {
             docker::docker_ps,
             docker::docker_action,
             docker::docker_logs,
+            host::host_ports,
+            host::host_services,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
