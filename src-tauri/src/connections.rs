@@ -29,13 +29,29 @@ const KEYRING_SERVICE: &str = "proxmox-desktop";
 /// `SecretStore` this app was built with, breaking Android).
 const SSH_SECRET_NAME: &str = "ssh";
 
+/// Whether a saved connection is a Proxmox cluster or a plain SSH host.
+///
+/// `#[serde(default)]` on the field below is load-bearing: every profile
+/// already written to a user's disk predates this field, and must keep
+/// deserialising as `Pve`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ConnectionKind {
+    #[default]
+    Pve,
+    Ssh,
+}
+
 /// One saved connection = one cluster (a single-node install is a cluster of one).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectionInfo {
     pub id: String,
     pub name: String,
-    /// e.g. `https://pve.example.com:8006`
+    #[serde(default)]
+    pub kind: ConnectionKind,
+    /// e.g. `https://pve.example.com:8006`. For `ConnectionKind::Ssh` this is
+    /// a bare hostname or IP -- no scheme, no port.
     pub host: String,
     /// Explicit per-connection opt-in for self-signed certs.
     pub accept_invalid_certs: bool,
@@ -322,5 +338,32 @@ mod tests {
     fn unknown_profile_names_the_id() {
         let msg = map_err(ConnManagerError::UnknownProfile("pve-1".into()));
         assert!(msg.contains("pve-1"), "should name the missing id: {msg}");
+    }
+
+    /// Every profile already on a user's disk predates the `kind` field.
+    /// Deserialising one without a `kind` key must silently become `Pve`,
+    /// not fail to load or default to something else -- this is the test
+    /// that catches silently breaking every existing install.
+    #[test]
+    fn a_profile_saved_before_the_kind_field_loads_as_pve() {
+        let json = r#"{"id":"pve-1","name":"home","host":"https://pve.example.com:8006","acceptInvalidCerts":false}"#;
+        let info: ConnectionInfo = serde_json::from_str(json).unwrap();
+        assert_eq!(info.kind, ConnectionKind::Pve);
+    }
+
+    /// The frontend's TS union is the lowercase strings `"pve"` / `"ssh"`,
+    /// so the casing is a contract, not a detail.
+    #[test]
+    fn the_kind_field_round_trips_as_a_lowercase_string() {
+        let info = ConnectionInfo {
+            id: "ssh-1".into(),
+            name: "wyse-server".into(),
+            kind: ConnectionKind::Ssh,
+            host: "wyse-server".into(),
+            accept_invalid_certs: false,
+            ssh: None,
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains(r#""kind":"ssh""#), "{json}");
     }
 }

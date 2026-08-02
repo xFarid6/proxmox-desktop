@@ -22,10 +22,15 @@ export interface SshInfo {
   useAgent: boolean;
 }
 
+/** Whether a saved connection is a Proxmox cluster or a plain SSH host.
+ * An SSH host has no PVE API and no API token — only `ssh` credentials. */
+export type ConnectionKind = "pve" | "ssh";
+
 export interface ConnectionInfo {
   id: string;
   name: string;
   host: string;
+  kind: ConnectionKind;
   acceptInvalidCerts: boolean;
   ssh?: SshInfo | null;
 }
