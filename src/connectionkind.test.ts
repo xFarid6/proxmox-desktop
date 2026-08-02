@@ -45,6 +45,18 @@ describe("navFor", () => {
     expect(routes).toContain("/connections");
   });
 
+  it("gives an SSH host its terminal tab", () => {
+    const routes = navFor(sshConn, { cephAvailable: true }).map((i) => i.to);
+    expect(routes).toContain("/host/terminal");
+  });
+
+  it("does not offer the SSH-host terminal tab to a PVE connection", () => {
+    // A PVE node's shell is reached per-node from the dashboard, not from a
+    // connection-wide tab — /host/* belongs to SSH hosts only.
+    const routes = navFor(pveConn, { cephAvailable: true }).map((i) => i.to);
+    expect(routes).not.toContain("/host/terminal");
+  });
+
   it("gives a PVE connection today's full nav, minus Ceph when unavailable", () => {
     const routes = navFor(pveConn, { cephAvailable: false }).map((i) => i.to);
     expect(routes).toEqual([

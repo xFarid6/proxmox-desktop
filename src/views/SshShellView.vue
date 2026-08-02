@@ -1,17 +1,22 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { api } from "../api";
-import { activeId } from "../stores/connections";
+import { activeConnection, activeId } from "../stores/connections";
 
 // Same pve-xtermjs wire protocol as ConsoleView.vue's term mode -- the
 // backend bridge (ssh_console.rs) speaks it too, so this is the same
 // wiring, just against an SSH shell instead of a Proxmox termproxy.
 
 const route = useRoute();
-const node = route.params.node as string;
+// Absent on /host/terminal: an SSH host has no node to name, and the shell was
+// never opened per-node anyway -- open_ssh_shell takes a connection id (#103).
+const node = route.params.node as string | undefined;
+const title = computed(() => node ?? activeConnection.value?.name ?? "host");
+// /dashboard is a PVE-only route, so an SSH host would just be bounced back.
+const backTo = node ? "/dashboard" : "/connections";
 
 const screen = ref<HTMLElement | null>(null);
 const status = ref("connecting…");
@@ -82,13 +87,13 @@ onBeforeUnmount(() => {
 <template>
   <div class="ssh-page">
     <div class="head">
-      <h1>SSH shell — {{ node }}</h1>
+      <h1>SSH shell — {{ title }}</h1>
       <span
         class="status"
         :class="status"
       >{{ status }}</span>
-      <router-link to="/dashboard">
-        Back to dashboard
+      <router-link :to="backTo">
+        {{ node ? "Back to dashboard" : "Back to connections" }}
       </router-link>
     </div>
     <p
