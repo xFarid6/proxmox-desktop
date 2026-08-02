@@ -38,30 +38,47 @@ normally — this rule is about the four sibling repos only.
 
 [v0.2.0 released](https://github.com/xFarid6/proxmox-desktop/releases/tag/v0.2.0)
 2026-07-29 — v1, v2, android-v1 all shipped. Release-signing secrets live in
-repo secrets. Two open milestones:
+repo secrets.
 
-**v4-integration** (runs first)
-- #64 adopt conn-manager crate
-- #23 SSH mode — port hopline's `ssh.rs` + `known_hosts.rs`, trimmed to the
-  subset this app needs (connect, auth, host-key check, one PTY shell channel)
-- #65 Docker inside a guest — `docker` CLI over the #23 channel, not a bollard port
-- #66 live-cluster + real-device validation
+**Both v3 and v4-integration are complete; both milestones are closed.** Do not
+plan work off a milestone list — check `gh issue list --state open` first.
 
-**v3** — #22 network editing and #24 multi-cluster left. #18 HA, #19 Ceph and
-#20 certificates shipped 2026-07-30 (PRs #76/#77/#78), each as
-`HaView`/`CephView`/`CertificatesView` + client methods + wiremock tests.
+Shipped since the last time this section was accurate:
 
-Order is a real dependency chain, not taste: #64 → #23 → #65. SSH creds ride the
-migrated secret store; Docker talks over the SSH channel.
+- **v4-integration**, all closed 2026-07-29: #64 conn-manager crate, #23 SSH mode
+  (hopline's `ssh.rs` + `known_hosts.rs` ported), #65 Docker inside a guest,
+  #66 live-cluster + real-device validation, #71 frontend tests.
+- **v3**: #18 HA, #19 Ceph, #20 certificates (PRs #76/#77/#78) as
+  `HaView`/`CephView`/`CertificatesView` + client methods + wiremock tests;
+  #22 network editing and #24 multi-cluster also closed.
+- **A UX/diagnostics wave** the old notes predate: #75 LAN + Tailscale host
+  discovery, #84/#85 loading indicators, #86 split token ID/secret fields,
+  #87/#90/#91 explain empty dashboards, 403s and empty storage instead of showing
+  blanks, #88 create-task button, #89 backup preflight checks.
 
-The v3 plan wanted #24 before #18/#19 so those views were born
-multi-cluster-aware. It went the other way, so #24 has to retrofit three views
-(`HaView`, `CephView`, `CertificatesView`) that each read `activeId` directly —
-that is #24's cost, not a bug in them.
+**Open as of 2026-08-03: eight issues, in two families.**
 
-#65 is the most speculative item — "containers on Proxmox" usually means LXC,
-which this app already manages via the API. #65 is about *Docker inside* an
-LXC/VM. Real homelab pattern, but cut it first if the milestone runs long.
+*Generic SSH host* — connect to a plain SSH box, not a PVE cluster. Driving case
+is `wyse-server`'s 2026-08-02 webcam outage, diagnosed entirely by hand over ssh.
+#102 is the foundation (connection type + nav gating); #103 terminal, #104 ports
+& services, #105 Docker, #106 MJPEG viewer each add one tab on top of it.
+
+*LLM panel* — #99 chat panel for a guest serving an OpenAI-compatible endpoint,
+then #100 switch the served model, #101 context controls (clear / budget /
+compact). Driving case is `lab`'s CT 100. The differentiator is *discovery*
+(probe guests for `/v1/models`), not the chat UI: its hard part is that a guest's
+service address is often not its Proxmox-visible IP — the real case sits behind a
+NAT bridge and is reached over Tailscale or a host DNAT rule.
+
+**#99's own issue text is wrong on one point:** it says the endpoint-resolution
+logic is shared with #65 and should be lifted rather than rewritten. It cannot
+be. #65 reaches guests over SSH-to-the-node plus `pct exec` / `qm guest exec`
+(see `docker.rs`'s module doc) and never resolves an IP or a port at all. There
+is no such code in this repo to lift.
+
+Historical note kept because it still shapes the code: the v3 plan wanted #24
+before #18/#19 so those views would be born multi-cluster-aware. It went the other
+way, so #24 had to retrofit three views that each read `activeId` directly.
 
 ## Workflow
 
@@ -100,6 +117,14 @@ vault's `desktop-reference/`):
 |---|---|---|
 | proxmox | `100.80.231.52:8006`, SSH `:22` | the real cluster |
 | wyse-server | `100.77.208.85:22` | Debian, non-Proxmox SSH target / bastion for #23 |
+| lab (`lab.local.secondo`) | `192.168.1.13:8006`, tailnet `100.117.56.34` | **second** PVE 9.1 host, built 2026-08-01 |
+
+`lab` is a second, single-purpose Proxmox box running a local LLM (CT 100, an
+OpenAI-compatible endpoint on `:8080`). It is the driving case for #99 and a useful
+second target generally: PVE **9.1** vs the main host's 8.x, a WiFi uplink, and one
+guest on a port-less NAT bridge whose service IP is not its Proxmox-visible IP —
+exactly the topology that breaks naive endpoint assumptions. Full detail in the
+vault: `Claude-understandings/desktop-reference/lab-secondo-reference.md`.
 
 Phone `redmi-note-13-pro-5g` was offline as of 2026-07-29 — the real-device leg
 of #66 is blocked until it is back on the tailnet.

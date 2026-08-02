@@ -1,7 +1,7 @@
 //! Tauri commands — thin glue between the frontend and connections/proxmox.
 //! Errors cross the bridge as strings; tokens never appear in return values.
 
-use crate::connections::{self, ConnectionInfo};
+use crate::connections::{self, ConnectionInfo, ConnectionKind};
 use crate::proxmox::types::{
     AccessDomain, AccessRole, AccessUser, AclEntry, AcmeAccountEntry, BackupJob, CephDaemonAction,
     CephPool, CephServiceKind, CertificateInfo, ClusterResource, FirewallRule, GuestKind, HaGroup,
@@ -23,6 +23,13 @@ pub fn save_connection(
     token: Option<String>,
     ssh_secret: Option<String>,
 ) -> Result<(), String> {
+    if info.kind == ConnectionKind::Ssh && info.ssh.is_none() {
+        return Err(
+            "An SSH host connection needs SSH credentials. Fill in the user, port and \
+             authentication method."
+                .into(),
+        );
+    }
     let id = info.id.clone();
     connections::save(&app, info, token)?;
     if let Some(secret) = ssh_secret {

@@ -20,8 +20,16 @@ use std::time::Duration;
 use russh::client::{self, Handle};
 use russh::keys::agent::client::{AgentClient, AgentStream};
 use russh::keys::PrivateKeyWithHashAlg;
+use tauri::Manager;
 
+use crate::connections;
 use crate::known_hosts::{self, Verdict};
+
+/// Ceiling on one command, end to end. Every call through
+/// `exec_on_connection` is a short, non-interactive command; anything slower
+/// than this means the host, the guest, or the daemon behind it is wedged,
+/// and a UI waiting forever is worse than an error.
+pub const EXEC_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// How long we'll wait for the TCP connect + SSH handshake before giving up
 /// and reporting a timeout. Auth (which can involve a human typing a
@@ -513,6 +521,68 @@ pub fn describe_shell_error(e: &russh::Error, host: &str, port: u16) -> String {
              have been interrupted — try again."
         ),
     }
+}
+
+/// Runs one command on a connection's SSH host, reusing the connection's
+/// open session when there is one. Works for any saved connection -- a PVE
+/// node or a plain SSH host.
+///
+/// A cached session can be dead (the host rebooted, the shell's own bridge
+/// dropped it), and there is no cheap way to ask -- so a cached attempt that
+/// fails for any reason is retried once on a fresh connection instead of
+/// being reported. Only the fresh attempt's failure reaches the user.
+pub async fn exec_on_connection(
+    app: &tauri::AppHandle,
+    sessions: &SshSessions,
+    connection_id: &str,
+    command: &str,
+) -> Result<ExecOutput, String> {
+    let target = connections::ssh_target(app, connection_id)?;
+
+    // Cloned out of the map in one statement: the std Mutex guard must not
+    // be held across the awaits below.
+    let cached = sessions.0.lock().unwrap().get(connection_id).cloned();
+    if let Some(session) = cached {
+        let attempt = {
+            let handle = session.handle.lock().await;
+            tokio::time::timeout(EXEC_TIMEOUT, exec(&handle, command)).await
+        };
+        if let Ok(Ok(out)) = attempt {
+            return Ok(out);
+        }
+        sessions.0.lock().unwrap().remove(connection_id);
+    }
+
+    let known_hosts_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    let handle = connect(
+        &target.host,
+        target.port,
+        &target.user,
+        &target.auth(),
+        &known_hosts_dir,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    let session = Session {
+        handle: Arc::new(tokio::sync::Mutex::new(handle)),
+    };
+    sessions
+        .0
+        .lock()
+        .unwrap()
+        .insert(connection_id.to_string(), session.clone());
+
+    let handle = session.handle.lock().await;
+    tokio::time::timeout(EXEC_TIMEOUT, exec(&handle, command))
+        .await
+        .map_err(|_| {
+            format!(
+                "The command on {} did not finish within {}s.",
+                target.host,
+                EXEC_TIMEOUT.as_secs()
+            )
+        })?
+        .map_err(|e| describe_shell_error(&e, &target.host, target.port))
 }
 
 #[cfg(test)]

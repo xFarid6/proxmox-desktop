@@ -62,23 +62,31 @@ describe("tagOwner", () => {
 describe("clusterList", () => {
   it("lists every saved connection, in connections order", () => {
     connections.value = [
-      { id: "a", name: "home", host: "h", acceptInvalidCerts: false },
-      { id: "b", name: "work", host: "h", acceptInvalidCerts: false },
+      { id: "a", name: "home", host: "h", kind: "pve", acceptInvalidCerts: false },
+      { id: "b", name: "work", host: "h", kind: "pve", acceptInvalidCerts: false },
     ];
     expect(clusterList.value.map((c) => c.name)).toEqual(["home", "work"]);
   });
 
   it("stands in an empty state for a connection nothing has been fetched for", () => {
-    connections.value = [{ id: "a", name: "home", host: "h", acceptInvalidCerts: false }];
+    connections.value = [{ id: "a", name: "home", host: "h", kind: "pve", acceptInvalidCerts: false }];
     expect(clusterList.value[0]).toMatchObject({ id: "a", resources: [], error: "" });
+  });
+
+  it("excludes SSH hosts — they have no PVE API to fetch cluster state from (#102)", () => {
+    connections.value = [
+      { id: "a", name: "home", host: "h", kind: "pve", acceptInvalidCerts: false },
+      { id: "b", name: "wyse-server", host: "h", kind: "ssh", acceptInvalidCerts: false },
+    ];
+    expect(clusterList.value.map((c) => c.id)).toEqual(["a"]);
   });
 });
 
 describe("allGuests / allNodes", () => {
   beforeEach(() => {
     connections.value = [
-      { id: "a", name: "home", host: "h", acceptInvalidCerts: false },
-      { id: "b", name: "work", host: "h", acceptInvalidCerts: false },
+      { id: "a", name: "home", host: "h", kind: "pve", acceptInvalidCerts: false },
+      { id: "b", name: "work", host: "h", kind: "pve", acceptInvalidCerts: false },
     ];
     seed("a", "home", [
       res({ id: "node/pve1", type: "node", node: "pve1" }),
@@ -117,28 +125,36 @@ describe("allGuests / allNodes", () => {
 describe("multiCluster", () => {
   it("is false for zero or one connection", () => {
     expect(multiCluster.value).toBe(false);
-    connections.value = [{ id: "a", name: "home", host: "h", acceptInvalidCerts: false }];
+    connections.value = [{ id: "a", name: "home", host: "h", kind: "pve", acceptInvalidCerts: false }];
     expect(multiCluster.value).toBe(false);
   });
 
   it("is true from two connections up", () => {
     connections.value = [
-      { id: "a", name: "home", host: "h", acceptInvalidCerts: false },
-      { id: "b", name: "work", host: "h", acceptInvalidCerts: false },
+      { id: "a", name: "home", host: "h", kind: "pve", acceptInvalidCerts: false },
+      { id: "b", name: "work", host: "h", kind: "pve", acceptInvalidCerts: false },
     ];
     expect(multiCluster.value).toBe(true);
+  });
+
+  it("is false for one PVE cluster plus one SSH host — that isn't a multi-cluster setup (#102)", () => {
+    connections.value = [
+      { id: "a", name: "home", host: "h", kind: "pve", acceptInvalidCerts: false },
+      { id: "b", name: "wyse-server", host: "h", kind: "ssh", acceptInvalidCerts: false },
+    ];
+    expect(multiCluster.value).toBe(false);
   });
 });
 
 describe("pruning", () => {
   it("drops state for a connection that has been deleted", async () => {
     connections.value = [
-      { id: "a", name: "home", host: "h", acceptInvalidCerts: false },
-      { id: "b", name: "work", host: "h", acceptInvalidCerts: false },
+      { id: "a", name: "home", host: "h", kind: "pve", acceptInvalidCerts: false },
+      { id: "b", name: "work", host: "h", kind: "pve", acceptInvalidCerts: false },
     ];
     seed("a", "home", [res({})]);
     seed("b", "work", [res({})]);
-    connections.value = [{ id: "a", name: "home", host: "h", acceptInvalidCerts: false }];
+    connections.value = [{ id: "a", name: "home", host: "h", kind: "pve", acceptInvalidCerts: false }];
     await nextTick();
     expect(Object.keys(clusters.value)).toEqual(["a"]);
   });

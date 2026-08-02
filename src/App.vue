@@ -1,10 +1,18 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import { cephAvailable, probeCeph } from "./ceph";
 import ToastList from "./components/ToastList.vue";
+import { isSshHost, navFor, routeAllowedFor } from "./connectionkind";
 import { startTaskAlerts } from "./stores/alerts";
 import { nodes, refreshCluster } from "./stores/cluster";
-import { activeId, connections, refreshConnections, setActive } from "./stores/connections";
+import {
+  activeConnection,
+  activeId,
+  connections,
+  refreshConnections,
+  setActive,
+} from "./stores/connections";
 
 startTaskAlerts();
 
@@ -14,10 +22,17 @@ startTaskAlerts();
 void refreshConnections();
 
 // Ceph is optional, so its nav entry only appears once a node answers
-// /ceph/status. Probed per connection and cached in ceph.ts.
-watch([activeId, nodes], () => void probeCeph(activeId.value, nodes.value[0]?.node), {
-  immediate: true,
-});
+// /ceph/status. Probed per connection and cached in ceph.ts. An SSH host has
+// no PVE API to probe (#102), so skip it rather than firing a pointless
+// request that can only fail.
+watch(
+  [activeId, nodes],
+  () => {
+    if (isSshHost(activeConnection.value)) return;
+    void probeCeph(activeId.value, nodes.value[0]?.node);
+  },
+  { immediate: true },
+);
 
 // Pull-to-refresh (#52): pulling down from the top re-keys the RouterView
 // (remount refetches the view's data) and refreshes the cluster store.
@@ -47,20 +62,23 @@ function onTouchEnd() {
   pulling = false;
 }
 
-const nav = computed(() => [
-  { to: "/connections", label: "Connections" },
-  { to: "/dashboard", label: "Dashboard" },
-  { to: "/guests", label: "VMs & CTs" },
-  { to: "/tasks", label: "Tasks" },
-  { to: "/network", label: "Network" },
-  { to: "/backups", label: "Backups" },
-  { to: "/firewall", label: "Firewall" },
-  { to: "/storage", label: "Storage" },
-  ...(cephAvailable.value ? [{ to: "/ceph", label: "Ceph" }] : []),
-  { to: "/certificates", label: "Certificates" },
-  { to: "/access", label: "Access" },
-  { to: "/ha", label: "HA" },
-]);
+const nav = computed(() =>
+  navFor(activeConnection.value, { cephAvailable: cephAvailable.value }),
+);
+
+// Hiding the nav entry is not enough on its own (#102): the router stays on
+// whatever route was open when the picker switches connections, so selecting
+// an SSH host from /dashboard would leave a PVE-only view on screen with no
+// PVE API behind it. Send those back to Connections.
+const route = useRoute();
+const router = useRouter();
+watch(
+  [activeConnection, () => route.path],
+  ([conn, path]) => {
+    if (!routeAllowedFor(conn, path)) void router.replace("/connections");
+  },
+  { immediate: true },
+);
 </script>
 
 <template>
@@ -82,7 +100,7 @@ const nav = computed(() => [
           :key="c.id"
           :value="c.id"
         >
-          {{ c.name }}
+          {{ c.name }}{{ isSshHost(c) ? " (SSH)" : "" }}
         </option>
       </select>
       <RouterLink

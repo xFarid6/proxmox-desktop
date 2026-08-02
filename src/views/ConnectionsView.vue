@@ -1,6 +1,12 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from "vue";
-import { api, type ConnectionInfo, type DiscoveredHost, type TailscalePeer } from "../api";
+import { onMounted, reactive, ref, watch } from "vue";
+import {
+  api,
+  type ConnectionInfo,
+  type ConnectionKind,
+  type DiscoveredHost,
+  type TailscalePeer,
+} from "../api";
 import { activeId, connections, refreshConnections, setActive } from "../stores/connections";
 import { toast } from "../stores/toast";
 import { joinToken, tokenProblem } from "../token";
@@ -18,6 +24,7 @@ const blank = () => ({
   id: "",
   name: "",
   host: "",
+  kind: "pve" as ConnectionKind,
   tokenId: "",
   tokenSecret: "",
   acceptInvalidCerts: false,
@@ -29,6 +36,15 @@ const blank = () => ({
   sshSecret: "",
 });
 const form = reactive(blank());
+
+// An SSH host has no PVE API — SSH is its only way in, so the checkbox that
+// makes SSH optional for a PVE connection doesn't apply to it (#102).
+watch(
+  () => form.kind,
+  (kind) => {
+    if (kind === "ssh") form.sshEnabled = true;
+  },
+);
 
 function startAdd() {
   Object.assign(form, blank());
@@ -42,10 +58,11 @@ function startEdit(c: ConnectionInfo) {
     id: c.id,
     name: c.name,
     host: c.host,
+    kind: c.kind,
     acceptInvalidCerts: c.acceptInvalidCerts,
     tokenId: "",
     tokenSecret: "",
-    sshEnabled: !!c.ssh,
+    sshEnabled: c.kind === "ssh" ? true : !!c.ssh,
     sshUser: c.ssh?.user ?? "",
     sshPort: c.ssh?.port ?? 22,
     sshAuth: c.ssh?.useAgent ? "agent" : c.ssh?.keyPath ? "key" : "password",
@@ -85,10 +102,13 @@ async function test() {
 }
 
 async function save() {
-  const problem = tokenProblem(form.tokenId, form.tokenSecret);
-  if (problem) {
-    error.value = problem;
-    return;
+  // An SSH host has no token to validate.
+  if (form.kind === "pve") {
+    const problem = tokenProblem(form.tokenId, form.tokenSecret);
+    if (problem) {
+      error.value = problem;
+      return;
+    }
   }
   busy.value = true;
   error.value = "";
@@ -97,7 +117,8 @@ async function save() {
       id: form.id || crypto.randomUUID(),
       name: form.name || form.host,
       host: form.host,
-      acceptInvalidCerts: form.acceptInvalidCerts,
+      kind: form.kind,
+      acceptInvalidCerts: form.kind === "ssh" ? false : form.acceptInvalidCerts,
       ssh: form.sshEnabled
         ? {
             user: form.sshUser,
@@ -110,7 +131,7 @@ async function save() {
     const sshSecret = form.sshEnabled && form.sshAuth !== "agent" ? form.sshSecret : undefined;
     await api.saveConnection(
       info,
-      joinToken(form.tokenId, form.tokenSecret) || undefined,
+      form.kind === "ssh" ? undefined : joinToken(form.tokenId, form.tokenSecret) || undefined,
       sshSecret || undefined,
     );
     editing.value = false;
@@ -167,6 +188,19 @@ async function scan() {
 function useDiscoveredHost(host: string) {
   Object.assign(form, blank());
   form.host = host;
+  testResult.value = "";
+  error.value = "";
+  editing.value = true;
+}
+
+/** Tailscale peers include non-PVE boxes like a plain Debian host — pre-fill
+ * the form as an SSH host rather than a PVE cluster, using the bare IP with
+ * no `https://` or `:8006` (#102). */
+function useDiscoveredHostAsSsh(ip: string) {
+  Object.assign(form, blank());
+  form.kind = "ssh";
+  form.host = ip;
+  form.sshEnabled = true;
   testResult.value = "";
   error.value = "";
   editing.value = true;
@@ -253,6 +287,13 @@ onMounted(refreshConnections);
               <strong>{{ peer.name }}</strong>
               <span class="result-detail">{{ peer.ip }} · {{ peer.os }} · {{ peer.online ? "online" : "offline" }}</span>
             </div>
+            <button
+              type="button"
+              class="use-ssh"
+              @click.stop="useDiscoveredHostAsSsh(peer.ip)"
+            >
+              Use as SSH host
+            </button>
           </div>
         </div>
       </div>
@@ -266,6 +307,10 @@ onMounted(refreshConnections);
         <div class="card-main">
           <strong>{{ c.name }}</strong>
           <span class="host">{{ c.host }}</span>
+          <span
+            v-if="c.kind === 'ssh'"
+            class="badge badge-ssh"
+          >SSH host</span>
           <span
             v-if="c.acceptInvalidCerts"
             class="badge"
@@ -303,6 +348,27 @@ onMounted(refreshConnections);
       class="form"
       @submit.prevent="save"
     >
+      <!-- An SSH host has no PVE API and no token — only ssh credentials
+           (#102). The rest of the form adapts to this choice below. -->
+      <div class="type-select">
+        <label class="radio">
+          <input
+            v-model="form.kind"
+            type="radio"
+            value="pve"
+          >
+          Proxmox cluster
+        </label>
+        <label class="radio">
+          <input
+            v-model="form.kind"
+            type="radio"
+            value="ssh"
+          >
+          SSH host
+        </label>
+      </div>
+
       <label>
         Name
         <input
@@ -314,42 +380,55 @@ onMounted(refreshConnections);
         Host
         <input
           v-model="form.host"
-          placeholder="https://pve.example.com:8006"
+          :placeholder="
+            form.kind === 'ssh'
+              ? 'wyse-server or 192.168.1.20 — no https:// or :8006'
+              : 'https://pve.example.com:8006'
+          "
           required
         >
       </label>
       <!-- Two fields, matching the two values Proxmox's token dialog shows.
            The ID is not secret and stays readable so a typo in it is visible;
-           only the secret is masked (#86). -->
-      <label>
-        Token ID
-        <input
-          v-model="form.tokenId"
-          :placeholder="form.id ? '(unchanged)' : 'root@pam!desktop'"
-          :required="!form.id"
-          autocomplete="off"
-          spellcheck="false"
-        >
-      </label>
-      <label>
-        Secret
-        <input
-          v-model="form.tokenSecret"
-          type="password"
-          :placeholder="form.id ? '(unchanged)' : 'the UUID shown when the token was created'"
-          :required="!form.id && !form.tokenId.includes('=')"
-          autocomplete="off"
-        >
-      </label>
-      <label class="check">
-        <input
-          v-model="form.acceptInvalidCerts"
-          type="checkbox"
-        >
-        Accept self-signed certificate (only enable for hosts you trust)
-      </label>
+           only the secret is masked (#86). Neither applies to an SSH host:
+           there is no PVE API to authenticate against. -->
+      <template v-if="form.kind === 'pve'">
+        <label>
+          Token ID
+          <input
+            v-model="form.tokenId"
+            :placeholder="form.id ? '(unchanged)' : 'root@pam!desktop'"
+            :required="!form.id"
+            autocomplete="off"
+            spellcheck="false"
+          >
+        </label>
+        <label>
+          Secret
+          <input
+            v-model="form.tokenSecret"
+            type="password"
+            :placeholder="form.id ? '(unchanged)' : 'the UUID shown when the token was created'"
+            :required="!form.id && !form.tokenId.includes('=')"
+            autocomplete="off"
+          >
+        </label>
+        <label class="check">
+          <input
+            v-model="form.acceptInvalidCerts"
+            type="checkbox"
+          >
+          Accept self-signed certificate (only enable for hosts you trust)
+        </label>
+      </template>
 
-      <label class="check">
+      <!-- SSH is optional for a PVE connection but mandatory for an SSH host
+           (forced on in the form.kind watcher), so the checkbox that makes it
+           optional only makes sense for a PVE connection. -->
+      <label
+        v-if="form.kind === 'pve'"
+        class="check"
+      >
         <input
           v-model="form.sshEnabled"
           type="checkbox"
@@ -405,14 +484,18 @@ onMounted(refreshConnections);
       </template>
 
       <p
-        v-if="testResult"
+        v-if="testResult && form.kind === 'pve'"
         class="ok"
       >
         {{ testResult }}
       </p>
 
       <div class="form-actions">
+        <!-- api.testConnection is a PVE API probe and would always fail for
+             an SSH host — there is deliberately no SSH test command in this
+             PR, that's #103's terminal tab (#102). -->
         <button
+          v-if="form.kind === 'pve'"
           type="button"
           :disabled="busy || !form.host"
           @click="test"
@@ -487,8 +570,30 @@ onMounted(refreshConnections);
   opacity: 0.6;
 }
 
+.badge-ssh {
+  font-size: 0.8em;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: rgba(229, 112, 0, 0.15);
+  color: #e57000;
+  opacity: 1;
+  align-self: flex-start;
+}
+
 .card-actions {
   display: flex;
+  gap: 6px;
+}
+
+.type-select {
+  display: flex;
+  gap: 16px;
+}
+
+.radio {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
   gap: 6px;
 }
 
@@ -583,5 +688,10 @@ onMounted(refreshConnections);
   opacity: 0.6;
   font-size: 0.9em;
   margin-left: 8px;
+}
+
+.use-ssh {
+  margin-left: auto;
+  font-size: 0.8em;
 }
 </style>

@@ -1,0 +1,111 @@
+import { describe, expect, it } from "vitest";
+import type { ConnectionInfo } from "./api";
+import { isSshHost, navFor, routeAllowedFor } from "./connectionkind";
+
+const pveConn: ConnectionInfo = {
+  id: "1",
+  name: "cluster",
+  host: "https://pve.example.com:8006",
+  kind: "pve",
+  acceptInvalidCerts: false,
+};
+
+const sshConn: ConnectionInfo = {
+  id: "2",
+  name: "wyse-server",
+  host: "wyse-server",
+  kind: "ssh",
+  acceptInvalidCerts: false,
+  ssh: { user: "root", port: 22, useAgent: true },
+};
+
+const PVE_ONLY_ROUTES = [
+  "/dashboard",
+  "/guests",
+  "/network",
+  "/backups",
+  "/firewall",
+  "/storage",
+  "/ceph",
+  "/certificates",
+  "/access",
+  "/ha",
+];
+
+describe("navFor", () => {
+  it("gives an SSH host none of the PVE-only routes", () => {
+    const routes = navFor(sshConn, { cephAvailable: true }).map((i) => i.to);
+    for (const route of PVE_ONLY_ROUTES) {
+      expect(routes).not.toContain(route);
+    }
+  });
+
+  it("still gives an SSH host a way back to Connections", () => {
+    const routes = navFor(sshConn, { cephAvailable: true }).map((i) => i.to);
+    expect(routes).toContain("/connections");
+  });
+
+  it("gives a PVE connection today's full nav, minus Ceph when unavailable", () => {
+    const routes = navFor(pveConn, { cephAvailable: false }).map((i) => i.to);
+    expect(routes).toEqual([
+      "/connections",
+      "/dashboard",
+      "/guests",
+      "/tasks",
+      "/network",
+      "/backups",
+      "/firewall",
+      "/storage",
+      "/certificates",
+      "/access",
+      "/ha",
+    ]);
+  });
+
+  it("includes Ceph for a PVE connection once it is available", () => {
+    const routes = navFor(pveConn, { cephAvailable: true }).map((i) => i.to);
+    expect(routes).toContain("/ceph");
+  });
+
+  it("treats no connection selected as PVE, so the sidebar isn't blank", () => {
+    const routes = navFor(undefined, { cephAvailable: false }).map((i) => i.to);
+    expect(routes).toEqual(navFor(pveConn, { cephAvailable: false }).map((i) => i.to));
+  });
+});
+
+describe("routeAllowedFor", () => {
+  it("never restricts a PVE connection, including its deep routes", () => {
+    for (const path of ["/dashboard", "/guests/pve1/lxc/100", "/nodes/pve1/ssh", "/ha"]) {
+      expect(routeAllowedFor(pveConn, path)).toBe(true);
+    }
+  });
+
+  it("keeps an SSH host off every PVE-only route", () => {
+    for (const path of PVE_ONLY_ROUTES) {
+      expect(routeAllowedFor(sshConn, path)).toBe(false);
+    }
+  });
+
+  it("lets an SSH host reach Connections and its own /host tabs", () => {
+    // /host/* is where #103-#106 hang the terminal, ports, docker and stream
+    // tabs — they must not need this guard revisited when they land.
+    for (const path of ["/connections", "/host/terminal", "/host/services"]) {
+      expect(routeAllowedFor(sshConn, path)).toBe(true);
+    }
+  });
+});
+
+describe("isSshHost", () => {
+  it("is true for an ssh-kind connection", () => {
+    expect(isSshHost(sshConn)).toBe(true);
+  });
+
+  it("is false for a pve-kind connection", () => {
+    expect(isSshHost(pveConn)).toBe(false);
+  });
+
+  it("is false when there is no connection yet", () => {
+    expect(isSshHost(undefined)).toBe(false);
+    expect(isSshHost(null)).toBe(false);
+  });
+});
