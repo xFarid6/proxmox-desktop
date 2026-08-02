@@ -1,11 +1,18 @@
 import { computed, ref, watch } from "vue";
 import { api, type ClusterResource } from "../api";
-import { activeId, connections } from "./connections";
+import { activeId, connections, pveConnections } from "./connections";
 
 // Cluster state for every saved connection, not just the active one. A
 // connection is always a cluster of N >= 1 nodes — single-node installs are
 // just a cluster of one. State is keyed by connection id so an unreachable
 // cluster carries its own error while the others still render (#24).
+//
+// PVE connections only (#102): an SSH host has no PVE API, so
+// `api.clusterResources` would always fail for it. Fetching, counting or
+// listing it here would turn every saved SSH host into a permanent error
+// card on the Dashboard and Guests views. `pveConnections` filters those out;
+// `connections` itself is still used for the stale-state cleanup below,
+// which must fire for every kind of connection, not just PVE ones.
 
 export interface ClusterState {
   id: string;
@@ -33,7 +40,7 @@ function emptyState(id: string, name: string): ClusterState {
  * Connections not fetched yet show up empty rather than missing, so a view
  * can render the full list before any request finishes. */
 export const clusterList = computed<ClusterState[]>(() =>
-  connections.value.map((c) => clusters.value[c.id] ?? emptyState(c.id, c.name)),
+  pveConnections.value.map((c) => clusters.value[c.id] ?? emptyState(c.id, c.name)),
 );
 
 /** Stamp the owning connection onto each resource of the given types. */
@@ -50,7 +57,7 @@ export const allGuests = computed(() =>
 
 /** True once more than one connection is saved — the aggregate views use it to
  * decide whether a cluster column and filter are worth the space. */
-export const multiCluster = computed(() => connections.value.length > 1);
+export const multiCluster = computed(() => pveConnections.value.length > 1);
 
 const active = computed(() => (activeId.value ? clusters.value[activeId.value] : undefined));
 
@@ -94,7 +101,7 @@ export async function refreshCluster() {
 /** Refresh every saved connection at once. `refreshClusterById` absorbs its
  * own failures, so one dead cluster never rejects the batch. */
 export async function refreshAllClusters() {
-  await Promise.all(connections.value.map((c) => refreshClusterById(c.id)));
+  await Promise.all(pveConnections.value.map((c) => refreshClusterById(c.id)));
 }
 
 watch(activeId, refreshCluster);
