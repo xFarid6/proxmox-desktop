@@ -20,21 +20,10 @@
 //! No new credentials: this rides the connection's existing SSH config and
 //! the session `ssh_console.rs` may already have open.
 
-use std::sync::Arc;
-use std::time::Duration;
-
 use serde::{Deserialize, Serialize};
-use tauri::Manager;
 
-use crate::connections;
 use crate::proxmox::types::GuestKind;
-use crate::ssh::{self, ExecOutput, Session, SshSessions};
-
-/// Ceiling on one command, end to end. Every call here is a short,
-/// non-interactive `docker` invocation; anything slower than this means the
-/// node, the guest, or the daemon is wedged, and a UI waiting forever is
-/// worse than an error.
-const EXEC_TIMEOUT: Duration = Duration::from_secs(30);
+use crate::ssh::{self, ExecOutput, SshSessions, EXEC_TIMEOUT};
 
 /// Cap on `docker logs --tail`. The output crosses the Tauri bridge as one
 /// string and lands in a `<pre>`, so an unbounded tail is a way to freeze the
@@ -194,67 +183,6 @@ fn unwrap_agent_output(out: ExecOutput) -> Result<ExecOutput, String> {
     })
 }
 
-/// Runs one command on the node over SSH, reusing the connection's open
-/// session when there is one.
-///
-/// A cached session can be dead (the node rebooted, the shell's own bridge
-/// dropped it), and there is no cheap way to ask -- so a cached attempt that
-/// fails for any reason is retried once on a fresh connection instead of
-/// being reported. Only the fresh attempt's failure reaches the user.
-async fn exec_on_node(
-    app: &tauri::AppHandle,
-    sessions: &SshSessions,
-    connection_id: &str,
-    command: &str,
-) -> Result<ExecOutput, String> {
-    let target = connections::ssh_target(app, connection_id)?;
-
-    // Cloned out of the map in one statement: the std Mutex guard must not
-    // be held across the awaits below.
-    let cached = sessions.0.lock().unwrap().get(connection_id).cloned();
-    if let Some(session) = cached {
-        let attempt = {
-            let handle = session.handle.lock().await;
-            tokio::time::timeout(EXEC_TIMEOUT, ssh::exec(&handle, command)).await
-        };
-        if let Ok(Ok(out)) = attempt {
-            return Ok(out);
-        }
-        sessions.0.lock().unwrap().remove(connection_id);
-    }
-
-    let known_hosts_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
-    let handle = ssh::connect(
-        &target.host,
-        target.port,
-        &target.user,
-        &target.auth(),
-        &known_hosts_dir,
-    )
-    .await
-    .map_err(|e| e.to_string())?;
-    let session = Session {
-        handle: Arc::new(tokio::sync::Mutex::new(handle)),
-    };
-    sessions
-        .0
-        .lock()
-        .unwrap()
-        .insert(connection_id.to_string(), session.clone());
-
-    let handle = session.handle.lock().await;
-    tokio::time::timeout(EXEC_TIMEOUT, ssh::exec(&handle, command))
-        .await
-        .map_err(|_| {
-            format!(
-                "The command on {} did not finish within {}s.",
-                target.host,
-                EXEC_TIMEOUT.as_secs()
-            )
-        })?
-        .map_err(|e| ssh::describe_shell_error(&e, &target.host, target.port))
-}
-
 /// Why `pct exec` never reached the guest, if that is what happened.
 ///
 /// `pct` fails before entering the container -- "container '105' not
@@ -296,7 +224,7 @@ async fn exec_in_guest(
     vmid: u32,
     inner: &str,
 ) -> Result<ExecOutput, String> {
-    let out = exec_on_node(
+    let out = ssh::exec_on_connection(
         app,
         sessions,
         connection_id,
