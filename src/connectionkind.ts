@@ -15,13 +15,12 @@ export function isSshHost(c: ConnectionInfo | undefined | null): boolean {
 
 /** The sidebar/tab-bar nav for the active connection.
  *
- * An SSH host only gets the Connections link back — there is no PVE API to
- * back Dashboard, Guests, Network, Backups, Firewall, Storage, Ceph,
- * Certificates, Access or HA. The Terminal / Ports & Services / Docker /
- * Stream tabs an SSH host *does* support are #103-#106; each of those PRs
- * appends its own entry here together with the route and view it needs. This
- * list is meant to grow — shipping a link to a view that does not exist yet
- * would be a broken link. */
+ * An SSH host gets Connections and Terminal — there is no PVE API to back
+ * Dashboard, Guests, Network, Backups, Firewall, Storage, Ceph, Certificates,
+ * Access or HA. The remaining Ports & Services / Docker / Stream tabs an SSH
+ * host *does* support are #104-#106; each of those PRs appends its own entry
+ * here together with the route and view it needs. This list is meant to grow —
+ * shipping a link to a view that does not exist yet would be a broken link. */
 /** Whether a route is reachable for the active connection.
  *
  * Hiding a nav entry is not enough on its own: the router keeps whatever route
@@ -45,7 +44,10 @@ export function navFor(
   opts: { cephAvailable: boolean },
 ): NavItem[] {
   if (isSshHost(c)) {
-    return [{ to: "/connections", label: "Connections" }];
+    return [
+      { to: "/connections", label: "Connections" },
+      { to: "/host/terminal", label: "Terminal" },
+    ];
   }
   return [
     { to: "/connections", label: "Connections" },

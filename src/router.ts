@@ -12,6 +12,9 @@ const routes = [
     component: () => import("./views/ConsoleView.vue"),
   },
   { path: "/nodes/:node/ssh", component: () => import("./views/SshShellView.vue") },
+  // An SSH host's terminal is the same view: open_ssh_shell only ever took a
+  // connection id, so the node in the PVE route was always cosmetic (#103).
+  { path: "/host/terminal", component: () => import("./views/SshShellView.vue") },
   { path: "/tasks", component: () => import("./views/TasksView.vue") },
   { path: "/network", component: () => import("./views/NetworkView.vue") },
   { path: "/backups", component: () => import("./views/BackupsView.vue") },
