@@ -19,6 +19,51 @@ use crate::connections;
 use crate::proxmox::types::GuestKind;
 use crate::proxmox::Client;
 
+/// The subprotocol both console views offer, following pve-xtermjs.
+pub const WS_SUBPROTOCOL: &str = "binary";
+
+/// Accept the webview's WebSocket, echoing [`WS_SUBPROTOCOL`] when it is
+/// offered.
+///
+/// Load-bearing, not politeness: both views connect with
+/// `new WebSocket(url, ["binary"])`, and RFC 6455 requires a client to *fail*
+/// the connection when the server's handshake names no subprotocol it
+/// offered. A plain `accept_async` here therefore breaks every connection
+/// with a bare "websocket error" — which is what the SSH shell tab did on a
+/// live host until 2026-08-03. Shared by both bridges so neither can drift
+/// back.
+// The callback's `Err` is tungstenite's `ErrorResponse`, which is large and
+// not ours to shrink. This one never returns it.
+#[allow(clippy::result_large_err)]
+pub(crate) async fn accept_webview_ws(
+    stream: tokio::net::TcpStream,
+) -> Result<
+    tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
+    tokio_tungstenite::tungstenite::Error,
+> {
+    use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
+
+    tokio_tungstenite::accept_hdr_async(stream, |req: &Request, mut res: Response| {
+        let offered = req
+            .headers()
+            .get_all("Sec-WebSocket-Protocol")
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .flat_map(|v| v.split(','))
+            .any(|v| v.trim() == WS_SUBPROTOCOL);
+        if offered {
+            res.headers_mut().insert(
+                "Sec-WebSocket-Protocol",
+                WS_SUBPROTOCOL
+                    .parse()
+                    .expect("static token is a valid header"),
+            );
+        }
+        Ok(res)
+    })
+    .await
+}
+
 /// What the frontend needs to attach a console widget.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -189,7 +234,7 @@ pub async fn open_console(
             return;
         };
         drop(listener);
-        let Ok(local) = tokio_tungstenite::accept_async(stream).await else {
+        let Ok(local) = accept_webview_ws(stream).await else {
             return;
         };
         // Timeout so a dead route (network switch, tailnet peer offline)

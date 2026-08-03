@@ -10,9 +10,9 @@
 
 #[cfg(not(target_os = "android"))]
 use conn_manager::OsKeyring;
-use conn_manager::{secondary_key, ConnManagerError, Profile, ProfileStore};
 #[cfg(target_os = "android")]
-use conn_manager::{SecretError, SecretStore};
+use conn_manager::SecretStore;
+use conn_manager::{secondary_key, ConnManagerError, Profile, ProfileStore, SecretError};
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
 
@@ -149,9 +149,9 @@ pub fn info_and_token(
 }
 
 /// Info + SSH config for a saved connection that has SSH set up. The
-/// secret (password/passphrase) is read separately via `get_ssh_secret` --
-/// agent auth needs no secret at all, so callers ask for it only when the
-/// config actually calls for one.
+/// secret (password/passphrase) is read separately by `ssh_target` -- agent
+/// auth and unencrypted key files need no secret at all, so it is fetched
+/// only when the config actually calls for one.
 pub fn info_and_ssh(app: &tauri::AppHandle, id: &str) -> Result<(ConnectionInfo, SshInfo), String> {
     let info = store(app)?.get::<ConnectionInfo>(id).map_err(map_err)?;
     let ssh = info
@@ -208,12 +208,20 @@ fn ssh_host(api_host: &str) -> String {
 /// API URL, config from disk, secret from the keyring. Agent auth reads no
 /// secret at all, so a connection set up for the agent works even with
 /// nothing stored under its SSH key.
+///
+/// An unencrypted key file stores nothing either: `save_connection` skips the
+/// keyring write when the passphrase field is empty, so requiring an entry
+/// here would reject every passphrase-less key with a bare "no matching entry
+/// found in the secure storage". A missing entry is therefore normal for key
+/// auth and means "no passphrase" -- but it stays an error for password auth,
+/// where a missing entry really is a broken connection.
 pub fn ssh_target(app: &tauri::AppHandle, id: &str) -> Result<SshTarget, String> {
     let (info, ssh) = info_and_ssh(app, id)?;
     let secret = if ssh.use_agent {
         String::new()
     } else {
-        get_ssh_secret(app, id)?
+        let stored = store(app)?.get_secret(&secondary_key(id, SSH_SECRET_NAME));
+        secret_or_empty(stored, ssh.key_path.as_deref())?
     };
     Ok(SshTarget {
         host: ssh_host(&info.host),
@@ -225,10 +233,20 @@ pub fn ssh_target(app: &tauri::AppHandle, id: &str) -> Result<SshTarget, String>
     })
 }
 
-pub fn get_ssh_secret(app: &tauri::AppHandle, id: &str) -> Result<String, String> {
-    store(app)?
-        .get_secret(&secondary_key(id, SSH_SECRET_NAME))
-        .map_err(map_err)
+/// Split out of `ssh_target` so the "a missing entry means no passphrase, but
+/// only for key auth" rule can be tested without a `tauri::AppHandle` or a
+/// real OS keyring.
+fn secret_or_empty(
+    stored: Result<String, ConnManagerError>,
+    key_path: Option<&str>,
+) -> Result<String, String> {
+    match stored {
+        Ok(secret) => Ok(secret),
+        Err(ConnManagerError::Secret(SecretError::NoEntry)) if key_path.is_some() => {
+            Ok(String::new())
+        }
+        Err(e) => Err(map_err(e)),
+    }
 }
 
 pub fn save_ssh_secret(app: &tauri::AppHandle, id: &str, secret: &str) -> Result<(), String> {
@@ -285,6 +303,27 @@ mod tests {
             ConnManagerError::Serde(serde_json::from_str::<ConnectionInfo>("{").unwrap_err());
         let msg = map_err(serde);
         assert!(!msg.contains("line"), "leaked serde position detail: {msg}");
+    }
+
+    /// An unencrypted key file never writes a keyring entry, so demanding one
+    /// broke every passphrase-less key with "no matching entry found in the
+    /// secure storage" -- which is what a real SSH host hit on all four of its
+    /// tabs. Password auth has no such excuse and must still fail loudly.
+    #[test]
+    fn a_missing_entry_means_no_passphrase_for_key_auth_only() {
+        let no_entry = || Err(ConnManagerError::Secret(SecretError::NoEntry));
+
+        assert_eq!(
+            secret_or_empty(no_entry(), Some("/home/u/.ssh/id")),
+            Ok(String::new())
+        );
+        assert!(secret_or_empty(no_entry(), None).is_err());
+
+        // A stored passphrase is still returned untouched.
+        assert_eq!(
+            secret_or_empty(Ok("hunter2".into()), Some("/home/u/.ssh/id")),
+            Ok("hunter2".into())
+        );
     }
 
     #[test]

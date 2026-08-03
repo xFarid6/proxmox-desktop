@@ -90,6 +90,18 @@ const MAX_PROBES: usize = 10;
 /// line, so splitting on it cannot cut a response in half.
 const PROBE_MARK: &str = "@@ ";
 
+/// The one command both tabs list sockets with.
+///
+/// `-u` is load-bearing even for the TCP-only stream probe: `ss` prints the
+/// `Netid` column only when more than one protocol is asked for, and
+/// [`parse_ports`] reads the protocol from field 0 and the local address from
+/// field 4. Ask for `-tlnp` alone and every row shifts left — field 0 becomes
+/// `LISTEN` and field 4 becomes the *peer* address — so nothing matches the
+/// `tcp` filter and the stream tab silently finds no endpoints on any host.
+/// UDP rows are filtered out in [`probe_targets`] instead, which costs
+/// nothing.
+const SS_LISTENING: &str = "ss -tulnp";
+
 /// Whether a failed command failed because the tool is not installed at all,
 /// as opposed to the tool being there and unhappy. Same reasoning as
 /// `docker.rs`'s `is_docker_missing`: POSIX shells exit 127 for "command not
@@ -289,7 +301,7 @@ pub async fn host_ports(
     sessions: tauri::State<'_, SshSessions>,
     connection_id: String,
 ) -> Result<Option<Vec<ListeningPort>>, String> {
-    let out = ssh::exec_on_connection(&app, &sessions, &connection_id, "ss -tulnp").await?;
+    let out = ssh::exec_on_connection(&app, &sessions, &connection_id, SS_LISTENING).await?;
     if tool_missing(&out) {
         return Ok(None);
     }
@@ -342,7 +354,7 @@ pub async fn host_streams(
     sessions: tauri::State<'_, SshSessions>,
     connection_id: String,
 ) -> Result<Option<Vec<StreamEndpoint>>, String> {
-    let listening = ssh::exec_on_connection(&app, &sessions, &connection_id, "ss -tlnp").await?;
+    let listening = ssh::exec_on_connection(&app, &sessions, &connection_id, SS_LISTENING).await?;
     if tool_missing(&listening) {
         return Ok(None);
     }
@@ -393,6 +405,16 @@ tcp LISTEN 0      128                                     0.0.0.0:22    0.0.0.0:
 tcp LISTEN 0      4096                                          *:9090        *:*
 "#;
 
+    /// The same host as `ss -tlnp` — one protocol, so `ss` drops the `Netid`
+    /// column and prints a `State`-first header instead. Captured from
+    /// wyse-server on 2026-08-03; this is the shape the stream probe used to
+    /// ask for, and every field it needs is one column to the left.
+    const SS_TCP_ONLY: &str = r#"
+State  Recv-Q Send-Q               Local Address:Port  Peer Address:PortProcess
+LISTEN 0      128                        0.0.0.0:22         0.0.0.0:*    users:(("sshd",pid=803,fd=6))
+LISTEN 0      4096                       0.0.0.0:8082       0.0.0.0:*    users:(("docker-proxy",pid=1269910,fd=8))
+"#;
+
     /// wyse-server's units, plus a failed one in the standard shape —
     /// nothing was failing at capture time, and the failed row is the whole
     /// reason this tab exists.
@@ -404,6 +426,34 @@ mjpg-streamer.service     loaded failed failed  MJPEG webcam streamer
 ssh.service               loaded active running OpenBSD Secure Shell server
 user@0.service            loaded active running User Manager for UID 0
 "#;
+
+    /// Both tabs must keep asking for two protocols. Dropping `-u` costs the
+    /// `Netid` column, which shifts every field `parse_ports` reads: the
+    /// stream tab then found no `tcp` rows at all and reported "no media
+    /// endpoint" on a host that was serving one -- a silent wrong answer, not
+    /// an error. Live proof: wyse-server's mjpg-streamer on 8082 (2026-08-03).
+    #[test]
+    fn listing_command_asks_for_both_protocols() {
+        assert!(
+            SS_LISTENING.contains("-tu") || SS_LISTENING.contains("-ut"),
+            "single-protocol `ss` drops the Netid column: {SS_LISTENING}"
+        );
+
+        // Why it matters, rather than just that it does.
+        let shifted = parse_ports(SS_TCP_ONLY);
+        assert!(
+            !shifted.iter().any(|p| p.proto == "tcp"),
+            "single-protocol output cannot yield tcp rows: {shifted:?}"
+        );
+        assert!(
+            probe_targets(&shifted).is_empty(),
+            "and so the stream probe silently has nothing to probe"
+        );
+
+        // The command actually used does yield the streaming port.
+        let ok = probe_targets(&parse_ports(SS_ROOT));
+        assert!(ok.iter().any(|p| p.port == 8082), "found mjpg-streamer");
+    }
 
     #[test]
     fn reads_proto_address_and_port_from_real_output() {
