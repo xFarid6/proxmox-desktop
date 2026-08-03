@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { ListeningPort, ServiceUnit } from "./api";
-import { isFailed, sortPorts, sortUnits } from "./hostservices";
+import type { DockerContainer, ListeningPort, ServiceUnit } from "./api";
+import { isDetached, isFailed, sortContainers, sortPorts, sortUnits } from "./hostservices";
 
 function port(p: Partial<ListeningPort>): ListeningPort {
   return { proto: "tcp", address: "0.0.0.0", port: 22, process: null, pid: null, ...p };
@@ -70,5 +70,48 @@ describe("sortUnits", () => {
 describe("isFailed", () => {
   it("is false for a running unit", () => {
     expect(isFailed(unit({}))).toBe(false);
+  });
+});
+
+function container(c: Partial<DockerContainer>): DockerContainer {
+  return {
+    id: "abc123abc123",
+    name: "web",
+    image: "nginx",
+    state: "running",
+    status: "Up 2 hours",
+    ports: "",
+    networks: "bridge",
+    restartPolicy: null,
+    ...c,
+  };
+}
+
+describe("sortContainers", () => {
+  it("puts near-identical names next to each other", () => {
+    const sorted = sortContainers([
+      container({ id: "1", name: "webcam" }),
+      container({ id: "2", name: "zzz" }),
+      container({ id: "3", name: "webcam-old" }),
+    ]);
+    expect(sorted.map((c) => c.name)).toEqual(["webcam", "webcam-old", "zzz"]);
+  });
+
+  it("falls back to the id for an unnamed container", () => {
+    const sorted = sortContainers([container({ id: "b", name: "" }), container({ id: "a", name: "" })]);
+    expect(sorted.map((c) => c.id)).toEqual(["a", "b"]);
+  });
+});
+
+describe("isDetached", () => {
+  it("flags a running container attached to no network", () => {
+    expect(isDetached(container({ networks: "" }))).toBe(true);
+    expect(isDetached(container({ networks: "  " }))).toBe(true);
+  });
+
+  it("does not flag an attached container, or a stopped one", () => {
+    expect(isDetached(container({}))).toBe(false);
+    // A stopped container has no attachment by definition — not a fault.
+    expect(isDetached(container({ state: "exited", networks: "" }))).toBe(false);
   });
 });

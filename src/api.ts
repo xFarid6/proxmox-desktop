@@ -53,6 +53,12 @@ export interface DockerContainer {
   state: string;
   status: string;
   ports: string;
+  /** Comma-separated network names; empty when the container is attached to
+   * nothing, which is what a lost attachment looks like (#105). */
+  networks: string;
+  /** `always`, `unless-stopped`, `on-failure`, `no`. Only the SSH-host tab
+   * fetches it; `null` for a guest's containers and when none is set. */
+  restartPolicy: string | null;
 }
 
 export type DockerAction = "start" | "stop" | "restart";
@@ -494,6 +500,10 @@ export const api = {
   /** Running and failed units on an SSH host. `null` means no `systemctl`. */
   hostServices: (connectionId: string) =>
     call<ServiceUnit[] | null>("host_services", { connectionId }),
+  /** Containers on an SSH host, running or not, read-only (#105). `null` means
+   * the host has no `docker`. */
+  hostDockerPs: (connectionId: string) =>
+    call<DockerContainer[] | null>("host_docker_ps", { connectionId }),
   guestConfig: (connectionId: string, node: string, kind: GuestKind, vmid: number) =>
     call<Record<string, unknown>>("guest_config", { connectionId, node, kind, vmid }),
   setGuestConfig: (

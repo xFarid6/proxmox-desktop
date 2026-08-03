@@ -19,6 +19,12 @@
 //!
 //! No new credentials: this rides the connection's existing SSH config and
 //! the session `ssh_console.rs` may already have open.
+//!
+//! A generic SSH host (#105) is the same thing with the second hop removed --
+//! `docker` is on the box this app already has a shell on, so `host_docker_ps`
+//! calls `exec_on_connection` directly and reuses every parser here. It needs
+//! no `Target` enum: nothing but the command-wrapping differs, and the host's
+//! wrapping is "none".
 
 use serde::{Deserialize, Serialize};
 
@@ -30,7 +36,7 @@ use crate::ssh::{self, ExecOutput, SshSessions, EXEC_TIMEOUT};
 /// webview by asking for a chatty container's whole history.
 const MAX_LOG_LINES: u32 = 1000;
 
-/// The six fields `PsLine` actually reads, named explicitly.
+/// The seven fields `PsLine` actually reads, named explicitly.
 ///
 /// `{{json .}}` would be shorter, but it emits every column `docker ps`
 /// knows -- including `Labels`, which for an image that ships a description
@@ -45,8 +51,21 @@ const MAX_LOG_LINES: u32 = 1000;
 /// container that publishes nothing.
 const PS_FORMAT: &str = concat!(
     r#"{"ID":{{json .ID}},"Names":{{json .Names}},"Image":{{json .Image}},"#,
-    r#""State":{{json .State}},"Status":{{json .Status}},"Ports":{{json .Ports}}}"#,
+    r#""State":{{json .State}},"Status":{{json .Status}},"Ports":{{json .Ports}},"#,
+    r#""Networks":{{json .Networks}}}"#,
 );
+
+/// One line per container, joining a full id to its restart policy.
+///
+/// `docker ps` has no restart-policy column at any version, so the only way to
+/// get the field #105 asks for is `docker inspect`. Everything else the host
+/// Docker tab shows still comes from the single `ps` call.
+///
+/// ponytail: reads `RestartPolicy.Name` only, not `MaximumRetryCount` -- the
+/// count matters solely for `on-failure`, and "on-failure" is already the
+/// answer to "would this come back on its own?".
+const INSPECT_FORMAT: &str =
+    r#"{"Id":{{json .Id}},"RestartPolicy":{{json .HostConfig.RestartPolicy.Name}}}"#;
 
 /// One container as the guest's `docker ps` reported it.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -60,6 +79,14 @@ pub struct DockerContainer {
     /// `Up 3 hours`, `Exited (0) 2 days ago` -- the human one.
     pub status: String,
     pub ports: String,
+    /// Comma-separated network names, as `docker ps` prints them. A container
+    /// that lost its attachment shows empty here -- which is the whole point of
+    /// the column: that is what the 2026-08-02 webcam outage looked like.
+    pub networks: String,
+    /// `always`, `unless-stopped`, `on-failure`, `no`. `None` for a guest's
+    /// containers, where it is not fetched: it costs a second round trip and
+    /// only the SSH-host tab (#105) asks for it.
+    pub restart_policy: Option<String>,
 }
 
 /// What `docker ps --format '{{json .}}'` emits, one object per line.
@@ -79,6 +106,17 @@ struct PsLine {
     status: String,
     #[serde(rename = "Ports", default)]
     ports: String,
+    #[serde(rename = "Networks", default)]
+    networks: String,
+}
+
+/// One `INSPECT_FORMAT` line.
+#[derive(Debug, Deserialize)]
+struct InspectLine {
+    #[serde(rename = "Id")]
+    id: String,
+    #[serde(rename = "RestartPolicy", default)]
+    restart_policy: String,
 }
 
 /// The lifecycle actions this feature exposes. A closed set on purpose --
@@ -312,8 +350,32 @@ fn parse_ps(stdout: &str) -> Vec<DockerContainer> {
             state: p.state,
             status: p.status,
             ports: p.ports,
+            networks: p.networks,
+            restart_policy: None,
         })
         .collect()
+}
+
+/// Fills in `restart_policy` from an `INSPECT_FORMAT` batch.
+///
+/// `inspect` reports the full 64-character id while `ps` prints the short one,
+/// so the join is by prefix. Unmatched lines are ignored: the two commands list
+/// containers a moment apart, and one created in between is in the second list
+/// only. An empty policy name means none was set, which is `None` rather than
+/// an empty column value with no meaning.
+fn apply_restart_policies(containers: &mut [DockerContainer], stdout: &str) {
+    for line in stdout.lines().map(str::trim).filter(|l| !l.is_empty()) {
+        let Ok(parsed) = serde_json::from_str::<InspectLine>(line) else {
+            continue;
+        };
+        let Some(c) = containers
+            .iter_mut()
+            .find(|c| !c.id.is_empty() && parsed.id.starts_with(&c.id))
+        else {
+            continue;
+        };
+        c.restart_policy = Some(parsed.restart_policy.clone()).filter(|p| !p.is_empty());
+    }
 }
 
 /// Every container in a guest, running or not.
@@ -345,6 +407,50 @@ pub async fn docker_ps(
         return Err(docker_error(&out, "list containers"));
     }
     Ok(Some(parse_ps(&out.stdout)))
+}
+
+/// Every container on a plain SSH host, running or not, with its restart
+/// policy (#105).
+///
+/// Read-only on purpose: no start/stop/restart here, unlike the guest tab. As
+/// with `docker_ps`, `Ok(None)` means the host has no `docker` and doubles as
+/// the availability probe.
+#[tauri::command]
+pub async fn host_docker_ps(
+    app: tauri::AppHandle,
+    sessions: tauri::State<'_, SshSessions>,
+    connection_id: String,
+) -> Result<Option<Vec<DockerContainer>>, String> {
+    let out = ssh::exec_on_connection(
+        &app,
+        &sessions,
+        &connection_id,
+        &format!("docker ps -a --format '{PS_FORMAT}'"),
+    )
+    .await?;
+    if is_docker_missing(&out) {
+        return Ok(None);
+    }
+    if out.exit_status != 0 {
+        return Err(docker_error(&out, "list containers"));
+    }
+    let mut containers = parse_ps(&out.stdout);
+    if !containers.is_empty() {
+        // `docker inspect` with no arguments is an error, hence the guard.
+        let out = ssh::exec_on_connection(
+            &app,
+            &sessions,
+            &connection_id,
+            &format!("docker inspect --format '{INSPECT_FORMAT}' $(docker ps -aq)"),
+        )
+        .await?;
+        // A failed inspect leaves the restart column empty rather than sinking
+        // a container list that is already correct and useful without it.
+        if out.exit_status == 0 {
+            apply_restart_policies(&mut containers, &out.stdout);
+        }
+    }
+    Ok(Some(containers))
 }
 
 /// start / stop / restart one container.
@@ -474,7 +580,9 @@ mod tests {
     fn the_ps_template_asks_for_exactly_the_fields_that_are_parsed() {
         // Drift guard: a field added to `PsLine` without being added here
         // would silently always be its `default`.
-        for field in ["ID", "Names", "Image", "State", "Status", "Ports"] {
+        for field in [
+            "ID", "Names", "Image", "State", "Status", "Ports", "Networks",
+        ] {
             assert!(
                 PS_FORMAT.contains(&format!("{{{{json .{field}}}}}")),
                 "{field}"
@@ -490,11 +598,85 @@ mod tests {
             .replace("{{json .Image}}", r#""nginx""#)
             .replace("{{json .State}}", r#""running""#)
             .replace("{{json .Status}}", r#""Up 2 hours""#)
-            .replace("{{json .Ports}}", r#""""#);
+            .replace("{{json .Ports}}", r#""""#)
+            .replace("{{json .Networks}}", r#""bridge""#);
         let got = parse_ps(&rendered);
         assert_eq!(got.len(), 1, "{rendered}");
         assert_eq!(got[0].name, "web");
         assert_eq!(got[0].state, "running");
+        assert_eq!(got[0].networks, "bridge");
+        // `ps` never carries a restart policy; only the host path fills it in.
+        assert_eq!(got[0].restart_policy, None);
+    }
+
+    #[test]
+    fn the_inspect_template_renders_a_line_apply_restart_policies_can_read() {
+        let rendered = INSPECT_FORMAT
+            .replace("{{json .Id}}", &format!(r#""{}""#, "a".repeat(64)))
+            .replace(
+                "{{json .HostConfig.RestartPolicy.Name}}",
+                r#""unless-stopped""#,
+            );
+        let mut containers = vec![DockerContainer {
+            id: "a".repeat(12),
+            name: "web".into(),
+            image: "nginx".into(),
+            state: "running".into(),
+            status: "Up".into(),
+            ports: String::new(),
+            networks: "bridge".into(),
+            restart_policy: None,
+        }];
+        apply_restart_policies(&mut containers, &rendered);
+        // Joined despite `ps` reporting 12 hex characters and `inspect` 64.
+        assert_eq!(
+            containers[0].restart_policy.as_deref(),
+            Some("unless-stopped")
+        );
+    }
+
+    #[test]
+    fn a_container_with_no_restart_policy_reads_as_none_not_an_empty_string() {
+        let mut containers = vec![DockerContainer {
+            id: "abc123abc123".into(),
+            name: "web".into(),
+            image: "nginx".into(),
+            state: "exited".into(),
+            status: "Exited (0)".into(),
+            ports: String::new(),
+            networks: String::new(),
+            restart_policy: Some("always".into()),
+        }];
+        let full = format!("abc123abc123{}", "0".repeat(52));
+        apply_restart_policies(
+            &mut containers,
+            &format!(r#"{{"Id":"{full}","RestartPolicy":""}}"#),
+        );
+        assert_eq!(containers[0].restart_policy, None);
+    }
+
+    #[test]
+    fn inspect_output_for_an_unknown_or_unreadable_container_is_ignored() {
+        let mut containers = vec![DockerContainer {
+            id: "abc123abc123".into(),
+            name: "web".into(),
+            image: "nginx".into(),
+            state: "running".into(),
+            status: "Up".into(),
+            ports: String::new(),
+            networks: "bridge".into(),
+            restart_policy: None,
+        }];
+        apply_restart_policies(
+            &mut containers,
+            concat!(
+                "not json at all\n",
+                // A container created between the two commands.
+                r#"{"Id":"ffffffffffff000000","RestartPolicy":"always"}"#,
+                "\n\n",
+            ),
+        );
+        assert_eq!(containers[0].restart_policy, None);
     }
 
     #[test]
@@ -578,9 +760,11 @@ mod tests {
     #[test]
     fn parses_one_container_per_line() {
         let stdout = concat!(
-            r#"{"ID":"abc123","Names":"web","Image":"nginx","State":"running","Status":"Up 2 hours","Ports":"0.0.0.0:80->80/tcp"}"#,
+            r#"{"ID":"abc123","Names":"web","Image":"nginx","State":"running","Status":"Up 2 hours","Ports":"0.0.0.0:80->80/tcp","Networks":"web_default,bridge"}"#,
             "\n",
-            r#"{"ID":"def456","Names":"db","Image":"postgres:16","State":"exited","Status":"Exited (0) 1 day ago","Ports":""}"#,
+            // The 2026-08-02 shape: running, published a port, attached to
+            // nothing. It must survive parsing to be visible at all.
+            r#"{"ID":"def456","Names":"db","Image":"postgres:16","State":"exited","Status":"Exited (0) 1 day ago","Ports":"","Networks":""}"#,
             "\n",
         );
         let got = parse_ps(stdout);
@@ -588,7 +772,9 @@ mod tests {
         assert_eq!(got[0].name, "web");
         assert_eq!(got[0].state, "running");
         assert_eq!(got[0].ports, "0.0.0.0:80->80/tcp");
+        assert_eq!(got[0].networks, "web_default,bridge");
         assert_eq!(got[1].image, "postgres:16");
+        assert_eq!(got[1].networks, "");
     }
 
     #[test]

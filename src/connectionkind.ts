@@ -15,12 +15,17 @@ export function isSshHost(c: ConnectionInfo | undefined | null): boolean {
 
 /** The sidebar/tab-bar nav for the active connection.
  *
- * An SSH host gets Connections, Terminal and Ports & Services — there is no
- * PVE API to back Dashboard, Guests, Network, Backups, Firewall, Storage,
- * Ceph, Certificates, Access or HA. The remaining Docker / Stream tabs an SSH
- * host *does* support are #105-#106; each of those PRs appends its own entry
- * here together with the route and view it needs. This list is meant to grow —
- * shipping a link to a view that does not exist yet would be a broken link. */
+ * An SSH host gets Connections, Terminal, Ports & Services and Docker — there
+ * is no PVE API to back Dashboard, Guests, Network, Backups, Firewall, Storage,
+ * Ceph, Certificates, Access or HA. The remaining Stream tab an SSH host *does*
+ * support is #106, which appends its own entry here together with the route and
+ * view it needs. This list is meant to grow — shipping a link to a view that
+ * does not exist yet would be a broken link.
+ *
+ * Docker is listed unconditionally rather than probed at connect time: the tab
+ * itself reports a host with no `docker`, the same way Ports & Services reports
+ * a host with no `ss`. Gating the entry would mean an extra SSH round trip
+ * every time the connection changes, to hide one tab. */
 /** Whether a route is reachable for the active connection.
  *
  * Hiding a nav entry is not enough on its own: the router keeps whatever route
@@ -48,6 +53,7 @@ export function navFor(
       { to: "/connections", label: "Connections" },
       { to: "/host/terminal", label: "Terminal" },
       { to: "/host/services", label: "Ports & Services" },
+      { to: "/host/docker", label: "Docker" },
     ];
   }
   return [
