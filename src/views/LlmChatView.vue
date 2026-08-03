@@ -8,13 +8,20 @@ import {
   type ChatMessage,
   type GuestKind,
   type LlmEndpoint,
+  type LlmProps,
   type ModelFile,
 } from "../api";
+import UsageBar from "../components/UsageBar.vue";
 import { formatBytes } from "../format";
 import {
+  COMPACT_PROMPT,
+  KEEP_VERBATIM,
   RELOAD_POLL_MS,
   RELOAD_TIMEOUT_MS,
   appendDelta,
+  budgetWarning,
+  compactMessages,
+  conversationTokens,
   forgetProbe,
   isUsable,
   modelSwitchProblem,
@@ -52,9 +59,34 @@ const models = ref<ModelFile[] | null>(null);
 const switching = ref("");
 const reloadSeconds = ref(0);
 
+// Context controls (#101). Context in an OpenAI-compatible setup is client-side
+// — the whole message array is resent every turn — so this is entirely the
+// panel's job rather than something to wait for upstream.
+const props = ref<LlmProps | null>(null);
+const exactTokens = ref<number | null>(null);
+const speed = ref<number | null>(null);
+const compacting = ref(false);
+
 const canSend = computed(
-  () => !!draft.value.trim() && !streaming.value && !switching.value && isUsable(endpoint.value),
+  () =>
+    !!draft.value.trim() &&
+    !streaming.value &&
+    !switching.value &&
+    !compacting.value &&
+    isUsable(endpoint.value),
 );
+
+/** The server's own count when it has given one, the estimate otherwise.
+ *
+ * `messages` only changes on send, reply, clear and compact — `refreshUsage`
+ * runs after each of those — so the exact count is current whenever it exists.
+ * The estimate covers the gap before the first turn and any server that will
+ * not tokenise. */
+const usedTokens = computed(() => exactTokens.value ?? conversationTokens(messages.value));
+const budgetPercent = computed(() =>
+  props.value?.nCtx ? Math.round((usedTokens.value / props.value.nCtx) * 100) : 0,
+);
+const warning = computed(() => budgetWarning(usedTokens.value, props.value?.nCtx ?? 0));
 
 async function scrollToBottom() {
   await nextTick();
@@ -88,7 +120,106 @@ async function probe(force = false) {
   } finally {
     probing.value = false;
   }
-  await loadModels();
+  await Promise.all([loadModels(), loadProps()]);
+  await refreshUsage();
+}
+
+/** Ask the server for its context window and which optional endpoints it has.
+ * Absence means the gauges stay hidden rather than showing zeroes. */
+async function loadProps() {
+  if (!endpoint.value) {
+    props.value = null;
+    return;
+  }
+  try {
+    props.value = await api.llmProps(endpoint.value.baseUrl);
+  } catch {
+    props.value = null;
+  }
+}
+
+/** Correct the estimate against the server's own tokeniser, and pick up the
+ * generation speed while we are here. One round trip per turn, not per
+ * keystroke. */
+async function refreshUsage() {
+  if (!endpoint.value) return;
+  const base = endpoint.value.baseUrl;
+  const text = messages.value.map((m) => `${m.role}: ${m.content}`).join("\n");
+  try {
+    exactTokens.value = text ? await api.llmTokenCount(base, text) : 0;
+  } catch {
+    exactTokens.value = null;
+  }
+  if (props.value?.metricsEnabled) {
+    speed.value = await api.llmSpeed(base).catch(() => null);
+  }
+}
+
+/** Reset the conversation on **both** sides.
+ *
+ * Clearing only the client's list leaves the server holding a cached prefix of
+ * a conversation the user believes is gone — the subtle bug #101 names. When
+ * `--slots` is off there is no server half to clear, and the panel says so
+ * rather than implying it did something it did not. */
+async function clearConversation() {
+  messages.value = [];
+  exactTokens.value = 0;
+  error.value = "";
+  if (!endpoint.value) return;
+  try {
+    const erased = await api.llmClearSlots(endpoint.value.baseUrl);
+    toast(
+      erased > 0
+        ? `Cleared, and dropped ${erased} cached prefix${erased === 1 ? "" : "es"} on the server`
+        : "Cleared here. This server does not expose /slots, so its cached prefix stays until it is reused.",
+    );
+  } catch (e) {
+    error.value = String(e);
+  }
+}
+
+/** Fold the conversation into a summary, keeping the last few turns verbatim.
+ *
+ * Pure client-side: the summary is produced by the same model, then the array
+ * it replaces is simply no longer sent. Nothing on the server has to cooperate.
+ */
+async function compact() {
+  if (!endpoint.value || compacting.value || streaming.value) return;
+  compacting.value = true;
+  error.value = "";
+  let summary = "";
+  const id = crypto.randomUUID();
+  const channel = new Channel<ChatChunk>();
+  channel.onmessage = (chunk) => {
+    summary += chunk.delta;
+    if (chunk.done && chunk.error) error.value = chunk.error;
+  };
+  try {
+    await api.llmChat(
+      endpoint.value.baseUrl,
+      model.value,
+      [...messages.value, { role: "user", content: COMPACT_PROMPT }],
+      id,
+      channel,
+    );
+    const compacted = summary.trim()
+      ? compactMessages(messages.value, summary.trim())
+      : messages.value;
+    // `compactMessages` returns the array untouched when there is nothing
+    // behind the verbatim tail to fold. Saying "compacted" then would be a lie.
+    if (compacted !== messages.value) {
+      messages.value = compacted;
+      // The server's cached prefix belongs to a conversation that will never be
+      // sent again, so drop it along with the turns it covered.
+      await api.llmClearSlots(endpoint.value.baseUrl).catch(() => 0);
+      await refreshUsage();
+      toast("Conversation compacted");
+    }
+  } catch (e) {
+    error.value = String(e);
+  } finally {
+    compacting.value = false;
+  }
 }
 
 /** The model files on the guest's disk. Absence is not an error: a guest we
@@ -194,6 +325,7 @@ async function send() {
     }
     if (chunk.done) {
       streaming.value = false;
+      void refreshUsage();
       if (chunk.error) {
         // The partial reply stays on screen: it is real output, and hiding it
         // would lose the only evidence of how far the model got.
@@ -380,6 +512,57 @@ onMounted(() => probe());
           </table>
         </section>
 
+        <section class="card context">
+          <!-- The budget is only meaningful against a known window; a server
+               that will not say n_ctx gets no bar rather than a bar of zero. -->
+          <UsageBar
+            v-if="props?.nCtx"
+            label="Context used"
+            :value="budgetPercent"
+            :detail="`${usedTokens} / ${props.nCtx} tokens${exactTokens === null ? ' (estimated)' : ''}`"
+          />
+          <p
+            v-else
+            class="hint"
+          >
+            This server does not report its context window, so the budget cannot
+            be shown. Clear and compact still work.
+          </p>
+
+          <div class="actions">
+            <button
+              :disabled="messages.length === 0 || streaming || compacting"
+              @click="clearConversation"
+            >
+              Clear
+            </button>
+            <!-- Nothing to fold until there is more history than the verbatim
+                 tail keeps, so the button stays off rather than doing nothing. -->
+            <button
+              :disabled="messages.length <= KEEP_VERBATIM || streaming || compacting"
+              :title="
+                messages.length <= KEEP_VERBATIM
+                  ? `Nothing to fold yet — the last ${KEEP_VERBATIM} messages are always kept verbatim.`
+                  : ''
+              "
+              @click="compact"
+            >
+              {{ compacting ? "Compacting…" : "Compact" }}
+            </button>
+            <span
+              v-if="speed"
+              class="hint"
+            >{{ speed.toFixed(1) }} tok/s</span>
+          </div>
+
+          <p
+            v-if="warning"
+            class="warn"
+          >
+            {{ warning }}
+          </p>
+        </section>
+
         <section
           ref="log"
           class="card log"
@@ -526,5 +709,15 @@ onMounted(() => probe());
 .error {
   color: #c33;
   max-width: 70ch;
+}
+
+.context .actions {
+  margin-top: 12px;
+}
+
+.warn {
+  color: #e57000;
+  max-width: 70ch;
+  margin-top: 8px;
 }
 </style>

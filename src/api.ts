@@ -59,6 +59,17 @@ export interface ModelFile {
   fits: boolean;
 }
 
+/** What the server says about itself (#101). `--slots` and `--metrics` are off
+ * by default in llama.cpp, so the panel hides the gauges it cannot fill rather
+ * than firing requests that 404. */
+export interface LlmProps {
+  /** The context window a conversation is measured against. 0 when unknown. */
+  nCtx: number;
+  totalSlots: number;
+  slotsEnabled: boolean;
+  metricsEnabled: boolean;
+}
+
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
   content: string;
@@ -609,6 +620,18 @@ export const api = {
   llmSwitchModel: (connectionId: string, kind: GuestKind, vmid: number, file: string) =>
     call<void>("llm_switch_model", { connectionId, kind, vmid, file }),
   llmHealth: (baseUrl: string) => call<boolean>("llm_health", { baseUrl }),
+  /** Context window and which optional endpoints this server exposes (#101). */
+  llmProps: (baseUrl: string) => call<LlmProps | null>("llm_props", { baseUrl }),
+  /** Drop every slot's cached prefix — the server-side half of "clear".
+   * Returns how many slots were erased; 0 means `--slots` is off and the clear
+   * was client-side only. */
+  llmClearSlots: (baseUrl: string) => call<number>("llm_clear_slots", { baseUrl }),
+  /** The server's own token count for a string, or `null` if it will not
+   * tokenise. Called once a turn, not per keystroke. */
+  llmTokenCount: (baseUrl: string, text: string) =>
+    call<number | null>("llm_token_count", { baseUrl, text }),
+  /** Generation speed in tokens/second from `/metrics`, or `null`. */
+  llmSpeed: (baseUrl: string) => call<number | null>("llm_speed", { baseUrl }),
   guestConfig: (connectionId: string, node: string, kind: GuestKind, vmid: number) =>
     call<Record<string, unknown>>("guest_config", { connectionId, node, kind, vmid }),
   setGuestConfig: (
