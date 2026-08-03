@@ -97,6 +97,7 @@ pub fn run() {
             docker::docker_ps,
             docker::docker_action,
             docker::docker_logs,
+            docker::host_docker_ps,
             host::host_ports,
             host::host_services,
         ])

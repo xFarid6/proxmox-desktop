@@ -1,4 +1,6 @@
-import type { ListeningPort, ServiceUnit } from "./api";
+// Pure logic behind the SSH-host tabs (#104, #105); the views stay thin
+// renderers because this project has no component tests.
+import type { DockerContainer, ListeningPort, ServiceUnit } from "./api";
 
 /** Listening sockets in the order the question "what is on port N?" wants
  * them: by port, then by protocol, then by address. `ss` emits them grouped
@@ -27,4 +29,19 @@ export function sortUnits(units: ServiceUnit[]): ServiceUnit[] {
  * caught up yet. */
 export function isFailed(u: ServiceUnit): boolean {
   return u.active === "failed" || u.sub === "failed";
+}
+
+/** Containers by name rather than by creation time, so that two containers
+ * with near-identical names land next to each other.
+ *
+ * That is the 2026-08-02 failure: a duplicate, misconfigured container was
+ * masking a working one, and `docker ps` order put them lines apart. */
+export function sortContainers(containers: DockerContainer[]): DockerContainer[] {
+  return [...containers].sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id));
+}
+
+/** A running container attached to no network — it cannot be reached, however
+ * healthy its status line reads. The other half of the same outage. */
+export function isDetached(c: DockerContainer): boolean {
+  return c.state === "running" && c.networks.trim() === "";
 }
