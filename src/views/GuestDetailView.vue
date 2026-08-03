@@ -9,6 +9,7 @@ import {
   type HaResource,
 } from "../api";
 import { guestSid } from "../ha";
+import { isUsable, probeLlm } from "../llm";
 import { activeId } from "../stores/connections";
 import { toast } from "../stores/toast";
 
@@ -60,6 +61,10 @@ const ha = ref<HaResource | null>(null);
 const haAvailable = ref(false);
 const haBusy = ref(false);
 
+// LLM panel (#99). Link only, gated on the probe — the panel itself lives at
+// /guests/:node/:kind/:vmid/llm.
+const hasLlm = ref(false);
+
 async function loadHa() {
   if (!activeId.value) return;
   try {
@@ -104,7 +109,18 @@ async function refresh() {
   } finally {
     loading.value = false;
   }
-  await Promise.all([loadDocker(), loadHa()]);
+  await Promise.all([loadDocker(), loadHa(), loadLlm()]);
+}
+
+/** Whether this guest serves an OpenAI-compatible LLM (#99). Gates the link
+ * the same way `hasDocker` gates the Docker card — almost every guest serves
+ * none, so absence is the normal case and never an error. Runs after the
+ * config load because the probe needs the guest's name to match a tailnet
+ * peer, and it is deliberately last: a miss costs seconds. */
+async function loadLlm() {
+  if (!activeId.value) return;
+  const name = String(config.value.hostname ?? config.value.name ?? "");
+  hasLlm.value = isUsable(await probeLlm(activeId.value, kind, vmid, name));
 }
 
 /** Lists containers, and doubles as the "does this guest run Docker?" probe.
@@ -201,6 +217,12 @@ onMounted(refresh);
       </button>
       <router-link :to="`/guests/${node}/${kind}/${vmid}/console`">
         Console
+      </router-link>
+      <router-link
+        v-if="hasLlm"
+        :to="`/guests/${node}/${kind}/${vmid}/llm`"
+      >
+        LLM
       </router-link>
       <router-link to="/guests">
         Back to list

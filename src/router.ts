@@ -11,6 +11,7 @@ const routes = [
     path: "/guests/:node/:kind/:vmid/console",
     component: () => import("./views/ConsoleView.vue"),
   },
+  { path: "/guests/:node/:kind/:vmid/llm", component: () => import("./views/LlmChatView.vue") },
   { path: "/nodes/:node/ssh", component: () => import("./views/SshShellView.vue") },
   // An SSH host's terminal is the same view: open_ssh_shell only ever took a
   // connection id, so the node in the PVE route was always cosmetic (#103).

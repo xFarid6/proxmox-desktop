@@ -254,7 +254,7 @@ fn guest_unreachable(out: &ExecOutput) -> Option<&'static str> {
 
 /// Runs one command inside a guest and normalises the result across both
 /// guest kinds.
-async fn exec_in_guest(
+pub(crate) async fn exec_in_guest(
     app: &tauri::AppHandle,
     sessions: &SshSessions,
     connection_id: &str,

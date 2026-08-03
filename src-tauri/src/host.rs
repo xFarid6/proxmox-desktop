@@ -100,7 +100,7 @@ const PROBE_MARK: &str = "@@ ";
 /// `tcp` filter and the stream tab silently finds no endpoints on any host.
 /// UDP rows are filtered out in [`probe_targets`] instead, which costs
 /// nothing.
-const SS_LISTENING: &str = "ss -tulnp";
+pub(crate) const SS_LISTENING: &str = "ss -tulnp";
 
 /// Whether a failed command failed because the tool is not installed at all,
 /// as opposed to the tool being there and unhappy. Same reasoning as
@@ -136,7 +136,7 @@ fn split_addr_port(field: &str) -> Option<(String, u16)> {
     Some((addr.to_string(), port.parse().ok()?))
 }
 
-fn parse_ports(stdout: &str) -> Vec<ListeningPort> {
+pub(crate) fn parse_ports(stdout: &str) -> Vec<ListeningPort> {
     stdout
         .lines()
         .map(str::trim)

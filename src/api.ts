@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import { explainError } from "./apierror";
 
 /** Every command below goes through here rather than calling `invoke`
@@ -33,6 +33,32 @@ export interface ConnectionInfo {
   kind: ConnectionKind;
   acceptInvalidCerts: boolean;
   ssh?: SshInfo | null;
+}
+
+/** A guest's OpenAI-compatible LLM endpoint, as discovery found it (#99). */
+export interface LlmEndpoint {
+  /** Scheme, host and port, no trailing slash. */
+  baseUrl: string;
+  /** Model ids from `/v1/models`. llama-server reports exactly one — the model
+   * that process was started with, which is why switching it is #100. */
+  models: string[];
+  /** True when this is the user's pinned address rather than a probe result. */
+  manual: boolean;
+}
+
+export interface ChatMessage {
+  role: "system" | "user" | "assistant";
+  content: string;
+}
+
+/** One streamed piece of a reply. Exactly one chunk per request has `done`,
+ * including when generation failed — the panel re-enables its input on it. */
+export interface ChatChunk {
+  delta: string;
+  done: boolean;
+  /** Set when generation stopped because of an error. Whatever streamed before
+   * it is still a real partial reply and stays on screen. */
+  error: string | null;
 }
 
 export interface Version {
@@ -523,6 +549,38 @@ export const api = {
    * curled with a 2s timeout, serially. */
   hostStreams: (connectionId: string) =>
     call<StreamEndpoint[] | null>("host_streams", { connectionId }),
+  /** Where this guest's OpenAI-compatible LLM lives, or `null` if it serves
+   * none (#99) — the same "absence is not an error" shape as `dockerPs`.
+   * Takes a few seconds on a miss: several addresses are raced, each with its
+   * own timeout. */
+  llmProbe: (
+    connectionId: string,
+    kind: GuestKind,
+    vmid: number,
+    guestName: string,
+    portHint?: number,
+  ) =>
+    call<LlmEndpoint | null>("llm_probe", {
+      connectionId,
+      kind,
+      vmid,
+      guestName,
+      portHint: portHint ?? null,
+    }),
+  /** Pin this guest's endpoint, or pass `null` to forget it and probe afresh. */
+  llmSetEndpoint: (connectionId: string, kind: GuestKind, vmid: number, baseUrl: string | null) =>
+    call<void>("llm_set_endpoint", { connectionId, kind, vmid, baseUrl }),
+  /** Stream a completion. Resolves when generation ends — the reply itself
+   * arrives on `onChunk`, and exactly one chunk has `done` set, including on
+   * failure. `requestId` is what `llmCancel` stops. */
+  llmChat: (
+    baseUrl: string,
+    model: string,
+    messages: ChatMessage[],
+    requestId: string,
+    onChunk: Channel<ChatChunk>,
+  ) => call<void>("llm_chat", { baseUrl, model, messages, requestId, onChunk }),
+  llmCancel: (requestId: string) => call<void>("llm_cancel", { requestId }),
   guestConfig: (connectionId: string, node: string, kind: GuestKind, vmid: number) =>
     call<Record<string, unknown>>("guest_config", { connectionId, node, kind, vmid }),
   setGuestConfig: (
