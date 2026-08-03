@@ -56,25 +56,54 @@ Shipped since the last time this section was accurate:
   #87/#90/#91 explain empty dashboards, 403s and empty storage instead of showing
   blanks, #88 create-task button, #89 backup preflight checks.
 
-**Open as of 2026-08-03: eight issues, in two families.**
+**The generic-SSH-host family is done.** #102 (connection type + nav gating),
+#103 terminal, #104 ports & services, #105 Docker and #106 MJPEG viewer all
+shipped 2026-08-03, driven by `wyse-server`'s 2026-08-02 webcam outage. #112/#113
+then fixed the three defects the first GUI pass found — all four tabs had been
+merged with their commands verified over raw SSH and their views never opened,
+and two of the three failed *silently*. Hence `tools/cdp.mjs`: a GUI pass is part
+of shipping now, not a nice-to-have.
 
-*Generic SSH host* — connect to a plain SSH box, not a PVE cluster. Driving case
-is `wyse-server`'s 2026-08-02 webcam outage, diagnosed entirely by hand over ssh.
-#102 is the foundation (connection type + nav gating); #103 terminal, #104 ports
-& services, #105 Docker, #106 MJPEG viewer each add one tab on top of it.
+**Open as of 2026-08-03: #99, #100, #101 (the LLM panel) and #114 (two cosmetic
+defects in #102's connection form).**
 
 *LLM panel* — #99 chat panel for a guest serving an OpenAI-compatible endpoint,
 then #100 switch the served model, #101 context controls (clear / budget /
-compact). Driving case is `lab`'s CT 100. The differentiator is *discovery*
-(probe guests for `/v1/models`), not the chat UI: its hard part is that a guest's
-service address is often not its Proxmox-visible IP — the real case sits behind a
-NAT bridge and is reached over Tailscale or a host DNAT rule.
+compact). The differentiator is *discovery*, not the chat UI.
 
-**#99's own issue text is wrong on one point:** it says the endpoint-resolution
-logic is shared with #65 and should be lifted rather than rewritten. It cannot
-be. #65 reaches guests over SSH-to-the-node plus `pct exec` / `qm guest exec`
-(see `docker.rs`'s module doc) and never resolves an IP or a port at all. There
-is no such code in this repo to lift.
+Driving case, **topology confirmed live 2026-08-03**: `lab`'s CT 100 runs
+llama.cpp on `0.0.0.0:8080` serving `qwen3-30b-a3b`, on the port-less NAT bridge
+`vmbr1` (`vmbr0` is down). Four ways in, two of which work:
+
+| path | address | result |
+|---|---|---|
+| guest tailnet | `100.111.194.35:8080` | **200** |
+| host LAN DNAT | `192.168.1.13:8080` | **200** |
+| host tailnet | `100.117.56.34:8080` | fails — the DNAT is on `wlo1`/`vmbr0`, not `tailscale0` |
+| Proxmox-visible | `10.20.20.10:8080` | fails — unroutable from off-box |
+
+So a candidate list must include the *guest's own* tailnet address and the node's
+LAN address, and must not assume the node's tailnet address inherits the node's
+DNAT rules. Note `tailscale status` lied about this box being offline for 12h —
+when it disagrees with a direct ping, believe the ping.
+
+**Two corrections to the issues' own text:**
+
+- **#99 says its endpoint resolution is shared with #65 and should be lifted.**
+  Half wrong. #65 is the wrong donor — it reaches guests over SSH-to-the-node plus
+  `pct exec` / `qm guest exec` (see `docker.rs`'s module doc) and never resolves an
+  IP or a port. But there *is* something to lift, from **#75**:
+  `scan.rs::scan_tailscale` already enumerates tailnet peers, and the guest is its
+  own peer (`llm`, `100.111.194.35`) — which is the candidate that actually works.
+- **#100 is not an API call.** `llama-server` serves one model per process
+  (`--model .../Qwen3-30B-A3B-Instruct-2507-UD-IQ2_M.gguf`, four `.gguf` files on
+  disk). Switching means editing `/opt/llm/docker-compose.yml` and restarting,
+  which rides the `pct exec` transport #65 already has. There is no load-a-model
+  endpoint to call.
+
+`--slots`, `--metrics` and `--tokenize` are all enabled on the real box, so #101
+can use real token counts rather than a chars/4 estimate — but must still degrade
+when they are off, which is llama.cpp's default.
 
 Historical note kept because it still shapes the code: the v3 plan wanted #24
 before #18/#19 so those views would be born multi-cluster-aware. It went the other
@@ -97,6 +126,13 @@ way, so #24 had to retrofit three views that each read `activeId` directly.
 ## Gates — all must pass before pushing
 
 ```sh
+python tools/gates.py          # all seven, in order, with a report
+python tools/gates.py --only rust
+```
+
+which is exactly:
+
+```sh
 pnpm typecheck && pnpm lint && pnpm test && pnpm exec vite build
 cd src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
 ```
@@ -109,6 +145,15 @@ CI runs against a **mocked** Proxmox API (fixture HTTP server) and builds the
 Android app without running it. Green CI means correct behaviour against
 recorded responses — not verified against a real cluster or a real phone. That
 gap is #66.
+
+Green gates also do not mean the view renders: #112 shipped four tabs whose
+commands were verified over raw SSH and whose views had never been opened, and
+two of the three defects it found failed silently. **Open the tab in the running
+app before calling a feature done.** Do that over CDP, not synthetic mouse and
+keyboard — `node tools/cdp.mjs dev` then `node tools/cdp.mjs eval '<expr>'`; see
+[tools/README.md](tools/README.md). Vite serves the frontend unbundled in dev, so
+an eval can `await import("/src/api.ts")` and call any Tauri command directly.
+Windows/WebView2 only.
 
 Live targets on the tailnet (credentials NEVER in the repo; topology in the
 vault's `desktop-reference/`):
