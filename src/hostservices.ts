@@ -1,6 +1,6 @@
-// Pure logic behind the SSH-host tabs (#104, #105); the views stay thin
+// Pure logic behind the SSH-host tabs (#104, #105, #106); the views stay thin
 // renderers because this project has no component tests.
-import type { DockerContainer, ListeningPort, ServiceUnit } from "./api";
+import type { DockerContainer, ListeningPort, ServiceUnit, StreamEndpoint } from "./api";
 
 /** Listening sockets in the order the question "what is on port N?" wants
  * them: by port, then by protocol, then by address. `ss` emits them grouped
@@ -44,4 +44,31 @@ export function sortContainers(containers: DockerContainer[]): DockerContainer[]
  * healthy its status line reads. The other half of the same outage. */
 export function isDetached(c: DockerContainer): boolean {
   return c.state === "running" && c.networks.trim() === "";
+}
+
+/** The URL the viewer loads for a detected endpoint (#106).
+ *
+ * The backend probed over the host's *loopback*, so this is deliberately a
+ * different address: the desktop dials the connection's own host. When the
+ * two disagree — service alive, path to it broken — the image fails to load,
+ * and that is the state the tab has to be able to show. It is the 2026-08-02
+ * outage exactly.
+ *
+ * `nonce` is appended because a browser will happily re-serve a cached frame
+ * for the same URL, which would make a retry look successful.
+ */
+export function streamUrl(host: string, ep: StreamEndpoint, nonce = 0): string {
+  // A bare IPv6 literal needs brackets in a URL; one that already has them,
+  // or any hostname or IPv4, is used as it stands.
+  const authority = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+  const sep = ep.path.includes("?") ? "&" : "?";
+  return `http://${authority}:${ep.port}${ep.path}${sep}_pxx=${nonce}`;
+}
+
+/** Streams before snapshots, then by port. A live feed is what the tab is
+ * for; a still is the fallback when a server ignored `?action=`. */
+export function sortStreams(endpoints: StreamEndpoint[]): StreamEndpoint[] {
+  return [...endpoints].sort(
+    (a, b) => Number(b.kind === "stream") - Number(a.kind === "stream") || a.port - b.port,
+  );
 }

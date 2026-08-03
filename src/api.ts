@@ -85,6 +85,19 @@ export interface ServiceUnit {
   description: string;
 }
 
+/** A media endpoint found among an SSH host's listening ports (#106).
+ * `kind` is "stream" for `multipart/x-mixed-replace` (an MJPEG feed the
+ * viewer can keep open) and "snapshot" for a single still image. `path` is
+ * the path that was actually probed, so the URL rendered is the URL proven
+ * to answer. */
+export interface StreamEndpoint {
+  port: number;
+  path: string;
+  contentType: string;
+  kind: "stream" | "snapshot";
+  process: string | null;
+}
+
 export interface ClusterResource {
   id: string;
   type: "node" | "qemu" | "lxc" | "storage";
@@ -504,6 +517,12 @@ export const api = {
    * the host has no `docker`. */
   hostDockerPs: (connectionId: string) =>
     call<DockerContainer[] | null>("host_docker_ps", { connectionId }),
+  /** Media endpoints among the host's listening ports (#106). `null` means the
+   * host lacks `ss` or `curl`, so nothing can be probed; an empty list means it
+   * was probed and serves no stream. Takes seconds — every candidate port is
+   * curled with a 2s timeout, serially. */
+  hostStreams: (connectionId: string) =>
+    call<StreamEndpoint[] | null>("host_streams", { connectionId }),
   guestConfig: (connectionId: string, node: string, kind: GuestKind, vmid: number) =>
     call<Record<string, unknown>>("guest_config", { connectionId, node, kind, vmid }),
   setGuestConfig: (

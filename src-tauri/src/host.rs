@@ -1,16 +1,18 @@
-//! Read-only facts about a plain SSH host: what is listening, and what
-//! systemd is running (issue #104).
+//! Read-only facts about a plain SSH host: what is listening, what systemd is
+//! running (issue #104), and which of those listeners is a media stream (#106).
 //!
 //! Unlike [`crate::docker`], there is no guest hop here — an "SSH host"
 //! connection (#102) *is* the machine, so every command is one
 //! [`ssh::exec_on_connection`] call plus a parser:
 //!
 //! ```text
-//! app --ssh--> host --> ss / systemctl
+//! app --ssh--> host --> ss / systemctl / curl
 //! ```
 //!
-//! Both commands are pure reads. Starting, stopping or restarting a unit is
+//! Every command is a pure read. Starting, stopping or restarting a unit is
 //! deliberately out of scope for #104.
+
+use std::collections::HashSet;
 
 use serde::Serialize;
 
@@ -46,6 +48,47 @@ pub struct ServiceUnit {
     pub sub: String,
     pub description: String,
 }
+
+/// One listening port that answered [`STREAM_PATH`] with a media content
+/// type (#106).
+///
+/// `path` is carried rather than re-derived by the viewer: it is the path
+/// that was actually probed, so the URL the app renders is the URL that was
+/// proven to answer.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StreamEndpoint {
+    pub port: u16,
+    pub path: String,
+    /// The `Content-Type` header verbatim, boundary included.
+    pub content_type: String,
+    /// `stream` for `multipart/x-mixed-replace`, `snapshot` for a still image.
+    pub kind: String,
+    /// The owning process from `ss`, when it named one — see [`ListeningPort`].
+    pub process: Option<String>,
+}
+
+/// The one path probed on every candidate port. mjpg_streamer's, which is the
+/// driving case, and the shape the issue names.
+///
+/// ponytail: one path, not a list. A server that serves its stream somewhere
+/// else is not detected; probing N paths multiplies the wall clock below by N
+/// for a guess. Add a second path when a real host needs one.
+const STREAM_PATH: &str = "/?action=stream";
+
+/// Seconds curl waits per port. A live MJPEG stream never closes the
+/// connection, so this timeout — not the response — is what ends every
+/// successful probe. The headers are already on stdout by then.
+const PROBE_TIMEOUT_SECS: u32 = 2;
+
+/// Cap on ports probed in one call. The probes are serial, so the worst case
+/// is `MAX_PROBES * PROBE_TIMEOUT_SECS` = 20s, which has to stay under
+/// [`ssh::EXEC_TIMEOUT`] (30s) or a busy host times out the whole tab.
+const MAX_PROBES: usize = 10;
+
+/// Separator echoed before each probe. `@@ ` cannot start an HTTP header
+/// line, so splitting on it cannot cut a response in half.
+const PROBE_MARK: &str = "@@ ";
 
 /// Whether a failed command failed because the tool is not installed at all,
 /// as opposed to the tool being there and unhappy. Same reasoning as
@@ -134,6 +177,104 @@ fn parse_units(stdout: &str) -> Vec<ServiceUnit> {
         .collect()
 }
 
+/// The address curl should dial for a socket bound to `address`.
+///
+/// A wildcard bind is dialled over loopback: the probe answers "is this
+/// service alive at all", which is deliberately a different question from
+/// "can this desktop reach it". The viewer answers the second one by failing
+/// to load, and that split is the point — the 2026-08-02 outage was a service
+/// that was up with the network to it broken.
+fn probe_address(address: &str) -> &str {
+    match address {
+        "0.0.0.0" | "*" | "[::]" | "::" => "127.0.0.1",
+        specific => specific,
+    }
+}
+
+/// The ports worth probing: TCP, one entry per port number, SSH excluded.
+///
+/// Port 22 is skipped because curl talking HTTP to sshd only sits there until
+/// the timeout — a guaranteed two wasted seconds on every host.
+fn probe_targets(ports: &[ListeningPort]) -> Vec<ListeningPort> {
+    let mut seen = HashSet::new();
+    ports
+        .iter()
+        .filter(|p| p.proto == "tcp" && p.port != 22)
+        // The same service usually listens twice, on 0.0.0.0 and on [::].
+        .filter(|p| seen.insert(p.port))
+        .take(MAX_PROBES)
+        .cloned()
+        .collect()
+}
+
+fn probe_command(targets: &[ListeningPort]) -> String {
+    let list = targets
+        .iter()
+        .map(|p| format!("{}:{}", probe_address(&p.address), p.port))
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!(
+        "for hp in {list}; do echo \"{PROBE_MARK}$hp\"; \
+         curl -s -m {PROBE_TIMEOUT_SECS} -o /dev/null -D - \"http://$hp{STREAM_PATH}\"; done"
+    )
+}
+
+/// Classifies one probe's response headers.
+///
+/// `None` for anything that is not a media endpoint, which is the common case
+/// — most listening ports are an API, a database or nothing HTTP at all.
+/// The status line is checked so that a 404 page does not get read as content.
+fn endpoint_kind(block: &str) -> Option<(String, &'static str)> {
+    let mut lines = block.lines().map(str::trim).filter(|l| !l.is_empty());
+    // `HTTP/1.0 200 OK`, and it has to be a 2xx: an error page carries a
+    // content type of its own, and mjpg_streamer answers 400 with one to
+    // anything it does not understand — a HEAD request, for instance, which
+    // is why the probe is a GET.
+    let status = lines.next()?;
+    let code = status.strip_prefix("HTTP/")?.split_whitespace().nth(1)?;
+    if !code.starts_with('2') {
+        return None;
+    }
+    // Case matters here in practice, not just in theory: MJPG-Streamer/0.2
+    // sends `Content-Type` for the stream and `Content-type` for a snapshot.
+    let header = lines.find(|l| l.to_ascii_lowercase().starts_with("content-type:"))?;
+    let value = header.split_once(':')?.1.trim();
+    let lower = value.to_ascii_lowercase();
+    let kind = if lower.contains("multipart/x-mixed-replace") {
+        "stream"
+    } else if lower.starts_with("image/") {
+        // The server ignored the query and served a still. Worth showing —
+        // one frame still answers "is the camera alive" — but not as a stream.
+        "snapshot"
+    } else {
+        return None;
+    };
+    Some((value.to_string(), kind))
+}
+
+fn parse_probes(stdout: &str, targets: &[ListeningPort]) -> Vec<StreamEndpoint> {
+    stdout
+        .split(PROBE_MARK)
+        // Anything before the first mark is not a probe.
+        .skip(1)
+        .filter_map(|chunk| {
+            let (marker, headers) = chunk.split_once('\n')?;
+            let port: u16 = marker.trim().rsplit(':').next()?.parse().ok()?;
+            let (content_type, kind) = endpoint_kind(headers)?;
+            Some(StreamEndpoint {
+                port,
+                path: STREAM_PATH.to_string(),
+                content_type,
+                kind: kind.to_string(),
+                process: targets
+                    .iter()
+                    .find(|t| t.port == port)
+                    .and_then(|t| t.process.clone()),
+            })
+        })
+        .collect()
+}
+
 /// Every listening TCP/UDP socket on the host.
 ///
 /// `Ok(None)` means the host is reachable but has no `ss` — the caller says
@@ -184,6 +325,46 @@ pub async fn host_services(
         return Err(format!("Could not list services: {}", out.stderr.trim()));
     }
     Ok(Some(parse_units(&out.stdout)))
+}
+
+/// Media endpoints among the host's listening ports (#106).
+///
+/// Two round trips on the same cached session: `ss` for the candidates, then
+/// one shell loop that curls each. `Ok(None)` means the host is missing `ss`
+/// or `curl`, so nothing *can* be detected — the caller says so rather than
+/// showing an error, the same convention [`host_ports`] uses.
+///
+/// An empty list is the honest answer for a host with no media endpoint, and
+/// is not the same as `None`.
+#[tauri::command]
+pub async fn host_streams(
+    app: tauri::AppHandle,
+    sessions: tauri::State<'_, SshSessions>,
+    connection_id: String,
+) -> Result<Option<Vec<StreamEndpoint>>, String> {
+    let listening = ssh::exec_on_connection(&app, &sessions, &connection_id, "ss -tlnp").await?;
+    if tool_missing(&listening) {
+        return Ok(None);
+    }
+    if listening.exit_status != 0 {
+        return Err(format!(
+            "Could not list listening ports: {}",
+            listening.stderr.trim()
+        ));
+    }
+    let targets = probe_targets(&parse_ports(&listening.stdout));
+    if targets.is_empty() {
+        return Ok(Some(Vec::new()));
+    }
+    let probed =
+        ssh::exec_on_connection(&app, &sessions, &connection_id, &probe_command(&targets)).await?;
+    if tool_missing(&probed) {
+        return Ok(None);
+    }
+    // The exit status is deliberately not checked: curl exits 28 on the
+    // timeout that ends every *successful* stream probe, and the loop's status
+    // is the last probe's, whichever port that happened to be.
+    Ok(Some(parse_probes(&probed.stdout, &targets)))
 }
 
 #[cfg(test)]
@@ -319,6 +500,114 @@ user@0.service            loaded active running User Manager for UID 0
             parse_units("● mjpg-streamer.service loaded failed failed MJPEG webcam streamer");
         assert_eq!(units[0].name, "mjpg-streamer.service");
         assert_eq!(units[0].active, "failed");
+    }
+
+    /// Captured from wyse-server on 2026-08-03, running mjpg_streamer for the
+    /// physical webcam behind a published docker port. Three ports were
+    /// probed: the stream, a Cockpit that answers HTML, and one that refused
+    /// the connection and so produced no headers at all.
+    const PROBES: &str = r#"@@ 127.0.0.1:8082
+HTTP/1.0 200 OK
+Access-Control-Allow-Origin: *
+Connection: close
+Server: MJPG-Streamer/0.2
+Cache-Control: no-store, no-cache, must-revalidate, pre-check=0, post-check=0, max-age=0
+Pragma: no-cache
+Expires: Mon, 3 Jan 2000 12:34:56 GMT
+Content-Type: multipart/x-mixed-replace;boundary=boundarydonotcross
+
+@@ 127.0.0.1:9090
+HTTP/1.1 200 OK
+Content-Type: text/html
+Content-Security-Policy: connect-src 'self'
+
+@@ 127.0.0.1:5432
+"#;
+
+    #[test]
+    fn finds_the_mjpeg_stream_and_nothing_else() {
+        let targets = probe_targets(&parse_ports(SS_ROOT));
+        let found = parse_probes(PROBES, &targets);
+        assert_eq!(found.len(), 1, "only the multipart port is a stream");
+        let cam = &found[0];
+        assert_eq!(cam.port, 8082);
+        assert_eq!(cam.kind, "stream");
+        assert_eq!(cam.path, "/?action=stream");
+        assert_eq!(
+            cam.content_type,
+            "multipart/x-mixed-replace;boundary=boundarydonotcross"
+        );
+        // The port came from `ss`, so the process it named comes along.
+        assert_eq!(cam.process.as_deref(), Some("docker-proxy"));
+    }
+
+    #[test]
+    fn a_still_image_is_a_snapshot_not_a_stream() {
+        // Some servers ignore ?action= and just serve a frame. Still worth
+        // showing, but the viewer must not expect it to keep updating.
+        let block = "HTTP/1.0 200 OK\nServer: MJPG-Streamer/0.2\nContent-type: image/jpeg\n";
+        assert_eq!(
+            endpoint_kind(block),
+            Some(("image/jpeg".to_string(), "snapshot"))
+        );
+    }
+
+    #[test]
+    fn a_content_type_is_matched_whatever_its_case() {
+        // MJPG-Streamer/0.2 really does send `Content-Type` for the stream
+        // and `Content-type` for a snapshot, in the same process.
+        let upper = "HTTP/1.0 200 OK\nCONTENT-TYPE: multipart/x-mixed-replace;boundary=x\n";
+        assert_eq!(endpoint_kind(upper).unwrap().1, "stream");
+    }
+
+    #[test]
+    fn a_non_media_or_dead_port_is_not_an_endpoint() {
+        assert_eq!(
+            endpoint_kind("HTTP/1.1 200 OK\nContent-Type: text/html\n"),
+            None
+        );
+        // Connection refused: curl printed no headers at all.
+        assert_eq!(endpoint_kind(""), None);
+        // An error page must not be read as content just because it has one.
+        assert_eq!(
+            endpoint_kind("HTTP/1.1 404 Not Found\nContent-Type: image/png\n"),
+            None,
+            "a 404 body is not the endpoint"
+        );
+        // Something that is not HTTP at all -- an SMTP or SSH banner.
+        assert_eq!(endpoint_kind("220 mail.example.com ESMTP\n"), None);
+    }
+
+    #[test]
+    fn probes_each_tcp_port_once_and_never_ssh() {
+        let targets = probe_targets(&parse_ports(SS_ROOT));
+        let ports: Vec<u16> = targets.iter().map(|t| t.port).collect();
+        // SS_ROOT lists 22 twice, 8082 twice, 9090 once, plus UDP rows.
+        assert_eq!(ports, vec![8082, 9090]);
+    }
+
+    #[test]
+    fn probe_stays_inside_the_ssh_exec_timeout() {
+        // The cap is not cosmetic: exceed it and the whole tab dies on the
+        // 30s exec timeout instead of returning what it did find.
+        assert!(MAX_PROBES as u32 * PROBE_TIMEOUT_SECS < ssh::EXEC_TIMEOUT.as_secs() as u32);
+    }
+
+    #[test]
+    fn a_wildcard_bind_is_probed_over_loopback() {
+        assert_eq!(probe_address("0.0.0.0"), "127.0.0.1");
+        assert_eq!(probe_address("*"), "127.0.0.1");
+        assert_eq!(probe_address("[::]"), "127.0.0.1");
+        // A specific bind is dialled as it is -- loopback would not reach it.
+        assert_eq!(probe_address("192.168.1.105"), "192.168.1.105");
+    }
+
+    #[test]
+    fn the_probe_command_is_one_loop_over_every_target() {
+        let cmd = probe_command(&probe_targets(&parse_ports(SS_ROOT)));
+        assert!(cmd.contains("for hp in 127.0.0.1:8082 127.0.0.1:9090;"));
+        assert!(cmd.contains("http://$hp/?action=stream"));
+        assert!(cmd.contains("-m 2"), "each probe is time-boxed");
     }
 
     #[test]

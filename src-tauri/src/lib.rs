@@ -100,6 +100,7 @@ pub fn run() {
             docker::host_docker_ps,
             host::host_ports,
             host::host_services,
+            host::host_streams,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
