@@ -134,6 +134,21 @@ pub struct ModelFile {
     pub fits: bool,
 }
 
+/// What the server will tell us about itself (#101).
+///
+/// `slots` and `metrics` are `--slots` and `--metrics`, both **off by default**
+/// in llama.cpp. `/props` advertises them, so the panel can hide the gauges it
+/// cannot fill instead of firing requests that 404.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LlmProps {
+    /// The context window every conversation is measured against.
+    pub n_ctx: u32,
+    pub total_slots: u32,
+    pub slots_enabled: bool,
+    pub metrics_enabled: bool,
+}
+
 /// One message in the conversation, in the shape the API expects.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ChatMessage {
@@ -697,6 +712,160 @@ pub fn llm_cancel(cancels: tauri::State<'_, LlmCancels>, request_id: String) {
     cancels.0.lock().unwrap().insert(request_id);
 }
 
+/// `/props` into the four numbers the panel needs.
+///
+/// `n_ctx` is inside `default_generation_settings`, not at the top level, which
+/// is easy to miss and is why this is a named function with a test rather than
+/// an inline chain.
+fn parse_props(body: &serde_json::Value) -> LlmProps {
+    let n_ctx = body
+        .get("default_generation_settings")
+        .and_then(|d| d.get("n_ctx"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u32;
+    LlmProps {
+        n_ctx,
+        total_slots: body
+            .get("total_slots")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32,
+        slots_enabled: body
+            .get("endpoint_slots")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        metrics_enabled: body
+            .get("endpoint_metrics")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+    }
+}
+
+/// One gauge out of a Prometheus exposition body.
+///
+/// A hand-rolled two-field split rather than a parser crate: llama.cpp emits
+/// bare `name value` lines with no labels, and one metric is read.
+fn parse_metric(body: &str, name: &str) -> Option<f64> {
+    body.lines()
+        .filter(|line| !line.starts_with('#'))
+        .find_map(|line| {
+            let mut fields = line.split_whitespace();
+            (fields.next()? == name).then(|| fields.next()?.parse::<f64>().ok())?
+        })
+}
+
+/// What the server reports about itself, or `Ok(None)` if it will not say.
+#[tauri::command]
+pub async fn llm_props(base_url: String) -> Result<Option<LlmProps>, String> {
+    let client = probe_client()?;
+    let Ok(resp) = client
+        .get(format!("{}/props", normalise_base(&base_url)))
+        .send()
+        .await
+    else {
+        return Ok(None);
+    };
+    if !resp.status().is_success() {
+        return Ok(None);
+    }
+    Ok(resp
+        .json::<serde_json::Value>()
+        .await
+        .ok()
+        .map(|b| parse_props(&b)))
+}
+
+/// Drop every slot's cached prefix.
+///
+/// This is the server-side half of "clear". Clearing only the client's message
+/// list leaves the server holding a cached prefix of a conversation the user
+/// believes is gone — the subtle bug #101 names. Returns how many slots were
+/// erased, so the panel can say "client only" when `--slots` is off rather than
+/// implying it did something it did not.
+#[tauri::command]
+pub async fn llm_clear_slots(base_url: String) -> Result<u32, String> {
+    let base = normalise_base(&base_url);
+    let client = probe_client()?;
+    let Ok(resp) = client.get(format!("{base}/slots")).send().await else {
+        return Ok(0);
+    };
+    if !resp.status().is_success() {
+        return Ok(0);
+    }
+    let Ok(slots) = resp.json::<serde_json::Value>().await else {
+        return Ok(0);
+    };
+    let ids: Vec<u64> = slots
+        .as_array()
+        .map(|a| a.iter().filter_map(|s| s.get("id")?.as_u64()).collect())
+        .unwrap_or_default();
+
+    let mut erased = 0;
+    for id in ids {
+        let ok = client
+            .post(format!("{base}/slots/{id}?action=erase"))
+            .send()
+            .await
+            .map(|r| r.status().is_success())
+            .unwrap_or(false);
+        if ok {
+            erased += 1;
+        }
+    }
+    Ok(erased)
+}
+
+/// The server's own token count for a string, or `Ok(None)` if it will not
+/// tokenise.
+///
+/// Used once a turn to correct the client-side estimate — not per keystroke,
+/// which would be a round trip per character to render a warning.
+#[tauri::command]
+pub async fn llm_token_count(base_url: String, text: String) -> Result<Option<u32>, String> {
+    let client = probe_client()?;
+    let Ok(resp) = client
+        .post(format!("{}/tokenize", normalise_base(&base_url)))
+        .json(&serde_json::json!({ "content": text }))
+        .send()
+        .await
+    else {
+        return Ok(None);
+    };
+    if !resp.status().is_success() {
+        return Ok(None);
+    }
+    let Ok(body) = resp.json::<serde_json::Value>().await else {
+        return Ok(None);
+    };
+    Ok(body
+        .get("tokens")
+        .and_then(|t| t.as_array())
+        .map(|t| t.len() as u32))
+}
+
+/// Generation speed in tokens/second, when `--metrics` is on.
+///
+/// Worth showing rather than decorative: on CPU inference this varies by an
+/// order of magnitude between models on the same box (3.6 to 11.8 tok/s
+/// measured), so it is how a user tells a bad model choice from a slow machine.
+#[tauri::command]
+pub async fn llm_speed(base_url: String) -> Result<Option<f64>, String> {
+    let client = probe_client()?;
+    let Ok(resp) = client
+        .get(format!("{}/metrics", normalise_base(&base_url)))
+        .send()
+        .await
+    else {
+        return Ok(None);
+    };
+    if !resp.status().is_success() {
+        return Ok(None);
+    }
+    let Ok(body) = resp.text().await else {
+        return Ok(None);
+    };
+    Ok(parse_metric(&body, "llamacpp:predicted_tokens_seconds").filter(|v| *v > 0.0))
+}
+
 /// `MemTotal` from `/proc/meminfo`, in bytes.
 ///
 /// The guest's own view, not the Proxmox `maxmem`: a container's cgroup limit
@@ -1111,6 +1280,54 @@ MemTotal:       13631488 kB\n";
         assert!(!valid_model_file("$(reboot).gguf"));
         assert!(!valid_model_file("model.bin"));
         assert!(!valid_model_file(""));
+    }
+
+    /// `n_ctx` sits inside `default_generation_settings`, not at the top level.
+    /// Captured from the live box, trimmed to the keys that are read.
+    #[test]
+    fn props_reads_n_ctx_from_the_generation_settings() {
+        let body = serde_json::json!({
+            "default_generation_settings": {"n_ctx": 16384, "seed": 4294967295u32},
+            "total_slots": 4,
+            "model_alias": "qwen3-30b-a3b",
+            "endpoint_slots": true,
+            "endpoint_metrics": true,
+        });
+        assert_eq!(
+            parse_props(&body),
+            LlmProps {
+                n_ctx: 16384,
+                total_slots: 4,
+                slots_enabled: true,
+                metrics_enabled: true,
+            }
+        );
+    }
+
+    /// `--slots` and `--metrics` are off by default in llama.cpp, and a server
+    /// old enough not to advertise them at all must read as "off" rather than
+    /// as "on" — the panel hides gauges it cannot fill.
+    #[test]
+    fn props_treats_missing_flags_as_disabled() {
+        let props = parse_props(&serde_json::json!({"total_slots": 1}));
+        assert!(!props.slots_enabled);
+        assert!(!props.metrics_enabled);
+        assert_eq!(props.n_ctx, 0);
+    }
+
+    #[test]
+    fn metric_gauge_is_read_by_name() {
+        let body = "# HELP llamacpp:prompt_tokens_seconds Average prompt throughput in tokens/s.\n\
+# TYPE llamacpp:prompt_tokens_seconds gauge\n\
+llamacpp:prompt_tokens_seconds 41.5\n\
+llamacpp:predicted_tokens_seconds 11.8\n";
+        assert_eq!(
+            parse_metric(body, "llamacpp:predicted_tokens_seconds"),
+            Some(11.8)
+        );
+        // A prefix match would return the prompt gauge for the predicted one.
+        assert_eq!(parse_metric(body, "llamacpp:predicted"), None);
+        assert_eq!(parse_metric(body, "llamacpp:absent"), None);
     }
 
     #[test]

@@ -110,6 +110,10 @@ pub fn run() {
             llm::llm_models_available,
             llm::llm_switch_model,
             llm::llm_health,
+            llm::llm_props,
+            llm::llm_clear_slots,
+            llm::llm_token_count,
+            llm::llm_speed,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
