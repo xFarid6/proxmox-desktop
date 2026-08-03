@@ -30,7 +30,8 @@ tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# `stream` is for #99's SSE chat completions -- `bytes_stream()` lives behind it.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 thiserror = "2"
 tokio = { version = "1", features = ["net", "io-util", "time", "sync"] }
 tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }

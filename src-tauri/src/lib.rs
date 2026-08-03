@@ -6,6 +6,7 @@ pub mod console;
 pub mod docker;
 pub mod host;
 pub mod known_hosts;
+pub mod llm;
 pub mod proxmox;
 pub mod scan;
 pub mod ssh;
@@ -20,6 +21,7 @@ pub fn run() {
     let builder = builder.plugin(android_keystore::init());
     builder
         .manage(ssh::SshSessions::default())
+        .manage(llm::LlmCancels::default())
         .invoke_handler(tauri::generate_handler![
             commands::list_connections,
             commands::save_connection,
@@ -101,6 +103,10 @@ pub fn run() {
             host::host_ports,
             host::host_services,
             host::host_streams,
+            llm::llm_probe,
+            llm::llm_set_endpoint,
+            llm::llm_chat,
+            llm::llm_cancel,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
