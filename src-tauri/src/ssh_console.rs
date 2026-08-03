@@ -257,7 +257,7 @@ pub async fn open_ssh_shell(
             return;
         };
         drop(listener);
-        let Ok(ws) = tokio_tungstenite::accept_async(stream).await else {
+        let Ok(ws) = crate::console::accept_webview_ws(stream).await else {
             return;
         };
         let (mut ws_tx, mut ws_rx) = ws.split();
