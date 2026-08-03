@@ -73,6 +73,39 @@ const PROBE_CONCURRENCY: usize = 8;
 
 const CACHE_FILE: &str = "llm_endpoints.json";
 
+/// Where the guest keeps the compose project that runs the server (#100).
+///
+/// Switching model is **not an API call** — `llama-server` serves exactly one
+/// model per process, and there is no endpoint that loads a different one. So
+/// it is a config edit plus a restart, and that means a convention.
+///
+/// The one pxx-dex drives is a `docker compose` project whose `.env` names the
+/// model: `MODEL=` picks the file and `ALIAS=` is the id `/v1/models` then
+/// reports. #100's issue text assumes a different convention (an `llm-use`
+/// script) — that script does not exist on the box, on the node or in the
+/// guest, though `.env` still carries a comment recommending it.
+///
+/// A guest without this layout gets a sentence saying so and nothing else
+/// happens. Inventing a second mechanism to guess at would be worse.
+const LLM_COMPOSE_DIR: &str = "/opt/llm";
+
+/// Directories searched inside the guest for model files.
+///
+/// ponytail: a short list, like `PROBE_PORTS`. `/props` reports a `model_path`,
+/// but it is the path *inside the container* (`/models/...` on the real box,
+/// bind-mounted from `/opt/models`), so it cannot be listed over the guest
+/// channel. A box keeping models somewhere else needs a line added here.
+const MODEL_DIRS: [&str; 3] = ["/opt/models", "/models", "/var/lib/models"];
+
+/// The largest share of the guest's RAM a model file may take.
+///
+/// The weights are not the whole cost: the KV cache, the compute buffers and
+/// the server itself all have to fit alongside them. The issue's example is a
+/// 16 GiB model in a 13 GiB container, which does not fail cleanly — it
+/// OOM-loops. On the real box the loaded 10.1 GiB model sits at 0.78 of 13.0
+/// GiB and runs, so the line is above that and below 1.0.
+const MAX_MODEL_SHARE_OF_RAM: f64 = 0.85;
+
 /// A guest's LLM endpoint, as found.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -84,6 +117,21 @@ pub struct LlmEndpoint {
     pub models: Vec<String>,
     /// True when this came from the user's manual override rather than a probe.
     pub manual: bool,
+}
+
+/// One model file on the guest's disk, and whether it can actually be used.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelFile {
+    /// Bare filename — what goes into `MODEL=`.
+    pub file: String,
+    /// Full path inside the guest, so the view can say where it looked.
+    pub path: String,
+    pub bytes: u64,
+    /// The model the server is serving right now.
+    pub loaded: bool,
+    /// Whether it fits in the guest's RAM with room for the KV cache.
+    pub fits: bool,
 }
 
 /// One message in the conversation, in the shape the API expects.
@@ -649,6 +697,211 @@ pub fn llm_cancel(cancels: tauri::State<'_, LlmCancels>, request_id: String) {
     cancels.0.lock().unwrap().insert(request_id);
 }
 
+/// `MemTotal` from `/proc/meminfo`, in bytes.
+///
+/// The guest's own view, not the Proxmox `maxmem`: a container's cgroup limit
+/// is what the loader actually runs into, and it is one line to read over the
+/// channel already open.
+fn parse_mem_total(meminfo: &str) -> Option<u64> {
+    meminfo
+        .lines()
+        .find_map(|line| line.strip_prefix("MemTotal:"))
+        .and_then(|rest| rest.split_whitespace().next())
+        .and_then(|kb| kb.parse::<u64>().ok())
+        .map(|kb| kb * 1024)
+}
+
+/// Model files out of `ls -l --block-size=1`, as `(path, bytes)`.
+///
+/// `--block-size=1` because the default `ls -l` size is already bytes on GNU
+/// coreutils but not everywhere; asking explicitly costs nothing and removes
+/// the doubt. Lines that are not files (`total 123`, an error on a missing
+/// directory) do not parse and are dropped.
+fn parse_gguf_listing(stdout: &str) -> Vec<(String, u64)> {
+    stdout
+        .lines()
+        .filter_map(|line| {
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            // perms links owner group size month day time path
+            let bytes = fields.get(4)?.parse::<u64>().ok()?;
+            let path = fields.get(8..)?.join(" ");
+            path.ends_with(".gguf").then_some((path, bytes))
+        })
+        .collect()
+}
+
+/// Whether a model of this size leaves room to actually serve.
+fn fits_in_ram(bytes: u64, ram_bytes: u64) -> bool {
+    ram_bytes > 0 && (bytes as f64) <= (ram_bytes as f64) * MAX_MODEL_SHARE_OF_RAM
+}
+
+/// The `ALIAS=` to write alongside a new `MODEL=`.
+///
+/// The alias is the id `/v1/models` reports, so leaving the old one in place
+/// would have the server announce the previous model's name for the new one.
+/// The file's stem, lowercased, is not the hand-picked alias a human would
+/// choose — but it is unambiguous and it is honest about what is loaded.
+fn alias_for(file: &str) -> String {
+    file.trim_end_matches(".gguf").to_ascii_lowercase()
+}
+
+/// A model filename safe to interpolate into a shell command and a `sed`
+/// replacement. Deliberately strict: this string is written into a file that
+/// decides what the server executes.
+fn valid_model_file(file: &str) -> bool {
+    !file.is_empty()
+        && file.len() <= 255
+        && file.ends_with(".gguf")
+        && file
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '+'))
+}
+
+/// The model currently being served, from `/props`.
+///
+/// `model_path` is the path inside the *container*, so only its filename is
+/// comparable with what the guest's directories hold.
+async fn loaded_model_file(client: &reqwest::Client, base_url: &str) -> Option<String> {
+    let resp = client
+        .get(format!("{base_url}/props"))
+        .send()
+        .await
+        .ok()?
+        .json::<serde_json::Value>()
+        .await
+        .ok()?;
+    let path = resp.get("model_path")?.as_str()?;
+    Some(path.rsplit(['/', '\\']).next()?.to_string())
+}
+
+/// Every model file on the guest's disk, with size, fit, and which one is live.
+///
+/// `Ok(None)` means no `.gguf` was found in any known directory — the panel
+/// hides the switcher rather than showing an empty table, the same shape as
+/// every other probe here.
+#[tauri::command]
+pub async fn llm_models_available(
+    app: tauri::AppHandle,
+    sessions: tauri::State<'_, SshSessions>,
+    connection_id: String,
+    kind: GuestKind,
+    vmid: u32,
+    base_url: Option<String>,
+) -> Result<Option<Vec<ModelFile>>, String> {
+    let globs = MODEL_DIRS
+        .iter()
+        .map(|d| format!("{d}/*.gguf"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let listing = docker::exec_in_guest(
+        &app,
+        &sessions,
+        &connection_id,
+        kind,
+        vmid,
+        &format!("ls -l --block-size=1 {globs} 2>/dev/null; head -1 /proc/meminfo"),
+    )
+    .await?;
+
+    let ram = parse_mem_total(&listing.stdout).unwrap_or(0);
+    let mut files = parse_gguf_listing(&listing.stdout);
+    if files.is_empty() {
+        return Ok(None);
+    }
+    files.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let loaded = match base_url {
+        Some(url) => loaded_model_file(&probe_client()?, &normalise_base(&url)).await,
+        None => None,
+    };
+
+    Ok(Some(
+        files
+            .into_iter()
+            .map(|(path, bytes)| {
+                let file = path.rsplit('/').next().unwrap_or(&path).to_string();
+                ModelFile {
+                    loaded: loaded.as_deref() == Some(file.as_str()),
+                    fits: fits_in_ram(bytes, ram),
+                    file,
+                    path,
+                    bytes,
+                }
+            })
+            .collect(),
+    ))
+}
+
+/// Point the guest's compose project at a different model file and restart it.
+///
+/// Returns as soon as the restart is *issued*. The endpoint is then down for
+/// roughly a minute while the model loads, which is expected rather than an
+/// error — the caller polls [`llm_health`] and re-enables its chat on `ok`.
+#[tauri::command]
+pub async fn llm_switch_model(
+    app: tauri::AppHandle,
+    sessions: tauri::State<'_, SshSessions>,
+    connection_id: String,
+    kind: GuestKind,
+    vmid: u32,
+    file: String,
+) -> Result<(), String> {
+    if !valid_model_file(&file) {
+        return Err(format!(
+            "{file} is not a model filename this can switch to."
+        ));
+    }
+    let alias = alias_for(&file);
+
+    // Distinct exit codes rather than parsing stderr: each one is a different
+    // sentence to the user, and only the last is a real failure to report raw.
+    let script = format!(
+        "cd {dir} 2>/dev/null || exit 90; \
+         test -f .env || exit 91; \
+         sed -i 's|^MODEL=.*|MODEL={file}|; s|^ALIAS=.*|ALIAS={alias}|' .env || exit 92; \
+         grep -qx 'MODEL={file}' .env || exit 93; \
+         docker compose up -d",
+        dir = LLM_COMPOSE_DIR,
+    );
+    let out = docker::exec_in_guest(&app, &sessions, &connection_id, kind, vmid, &script).await?;
+
+    match out.exit_status {
+        0 => Ok(()),
+        90 | 91 => Err(format!(
+            "This guest has no {LLM_COMPOSE_DIR}/.env, so pxx-dex does not know how it starts its \
+             server and will not guess. Switch the model on the guest and the panel will pick up \
+             the change."
+        )),
+        92 | 93 => Err(format!(
+            "{LLM_COMPOSE_DIR}/.env has no MODEL= line to change. Add one naming the current \
+             model file, and this can drive it."
+        )),
+        _ => Err(format!(
+            "The restart failed: {}",
+            if out.stderr.trim().is_empty() {
+                out.stdout.trim()
+            } else {
+                out.stderr.trim()
+            }
+        )),
+    }
+}
+
+/// Whether the endpoint is serving again. Used to watch a model reload, where
+/// "not answering" is the expected state for about a minute, not a failure.
+#[tauri::command]
+pub async fn llm_health(base_url: String) -> Result<bool, String> {
+    let client = probe_client()?;
+    let Ok(resp) = client
+        .get(format!("{}/health", normalise_base(&base_url)))
+        .send()
+        .await
+    else {
+        return Ok(false);
+    };
+    Ok(resp.status().is_success())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -788,6 +1041,76 @@ rootfs: local-lvm:vm-100-disk-0,size=65G\n";
             "http://192.168.1.13:8080"
         );
         assert_eq!(normalise_base("https://box:8080"), "https://box:8080");
+    }
+
+    /// Captured from `lab` CT 100: the four models on disk and the guest's own
+    /// `MemTotal`, in the single command `llm_models_available` runs.
+    const MODEL_LISTING: &str = "-rw-r--r-- 1 root root   639447744 Aug  1 09:17 /opt/models/Qwen3-0.6B-Q8_0.gguf\n\
+-rw-r--r-- 1 root root  9159818624 Aug  1 09:16 /opt/models/Qwen3-14B-UD-Q4_K_XL.gguf\n\
+-rw-r--r-- 1 root root 10845131168 Aug  1 09:39 /opt/models/Qwen3-30B-A3B-Instruct-2507-UD-IQ2_M.gguf\n\
+-rw-r--r-- 1 root root  2546340960 Aug  1 09:40 /opt/models/Qwen3-4B-Instruct-2507-UD-Q4_K_XL.gguf\n\
+MemTotal:       13631488 kB\n";
+
+    #[test]
+    fn model_listing_reads_paths_and_byte_sizes() {
+        let files = parse_gguf_listing(MODEL_LISTING);
+        assert_eq!(files.len(), 4);
+        assert_eq!(
+            files[2],
+            (
+                "/opt/models/Qwen3-30B-A3B-Instruct-2507-UD-IQ2_M.gguf".to_string(),
+                10_845_131_168
+            )
+        );
+    }
+
+    /// The `MemTotal` line rides in the same output as the listing and must not
+    /// be mistaken for a file.
+    #[test]
+    fn model_listing_ignores_everything_that_is_not_a_gguf() {
+        let noisy = format!("total 23190765568\n{MODEL_LISTING}ls: cannot access '/models/*.gguf': No such file or directory\n");
+        assert_eq!(parse_gguf_listing(&noisy).len(), 4);
+    }
+
+    #[test]
+    fn mem_total_is_read_in_bytes() {
+        assert_eq!(parse_mem_total(MODEL_LISTING), Some(13_631_488 * 1024));
+        assert_eq!(parse_mem_total("no meminfo here"), None);
+    }
+
+    /// The real box: 13.0 GiB of RAM serving a 10.1 GiB model. That has to pass,
+    /// and the issue's 16 GiB-in-13 GiB example has to fail — it does not error
+    /// on the guest, it OOM-loops.
+    #[test]
+    fn ram_guard_admits_the_live_model_and_refuses_an_oversized_one() {
+        let ram = 13_631_488u64 * 1024;
+        assert!(fits_in_ram(10_845_131_168, ram));
+        assert!(!fits_in_ram(16 * 1024 * 1024 * 1024, ram));
+        // A guest whose RAM could not be read refuses everything rather than
+        // waving through a model that may not fit.
+        assert!(!fits_in_ram(1, 0));
+    }
+
+    #[test]
+    fn alias_follows_the_file_so_v1_models_stops_lying() {
+        assert_eq!(
+            alias_for("Qwen3-14B-UD-Q4_K_XL.gguf"),
+            "qwen3-14b-ud-q4_k_xl"
+        );
+    }
+
+    /// This string is written into the file that decides what the server runs,
+    /// so anything that could break out of the `sed` replacement or the shell
+    /// has to be refused rather than escaped.
+    #[test]
+    fn model_filenames_with_shell_or_sed_metacharacters_are_refused() {
+        assert!(valid_model_file("Qwen3-0.6B-Q8_0.gguf"));
+        assert!(!valid_model_file("../../etc/passwd.gguf"));
+        assert!(!valid_model_file("a|b.gguf"));
+        assert!(!valid_model_file("a b.gguf"));
+        assert!(!valid_model_file("$(reboot).gguf"));
+        assert!(!valid_model_file("model.bin"));
+        assert!(!valid_model_file(""));
     }
 
     #[test]

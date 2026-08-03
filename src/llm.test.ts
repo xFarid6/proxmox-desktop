@@ -1,6 +1,32 @@
 import { describe, expect, it } from "vitest";
-import type { ChatMessage } from "./api";
-import { appendDelta, isUsable } from "./llm";
+import type { ChatMessage, ModelFile } from "./api";
+import { appendDelta, isUsable, modelSwitchProblem } from "./llm";
+
+const model = (over: Partial<ModelFile> = {}): ModelFile => ({
+  file: "Qwen3-14B-UD-Q4_K_XL.gguf",
+  path: "/opt/models/Qwen3-14B-UD-Q4_K_XL.gguf",
+  bytes: 9_159_818_624,
+  loaded: false,
+  fits: true,
+  ...over,
+});
+
+describe("modelSwitchProblem", () => {
+  it("allows a model that fits and is not already loaded", () => {
+    expect(modelSwitchProblem(model())).toBeNull();
+  });
+
+  it("blocks the model already being served", () => {
+    expect(modelSwitchProblem(model({ loaded: true }))).toBe("Already loaded.");
+  });
+
+  // The switch has to be refused before it is issued: an oversized model does
+  // not fail cleanly on the guest, it OOM-loops, and the endpoint that worked
+  // a minute ago never comes back.
+  it("blocks a model too large for the guest's RAM", () => {
+    expect(modelSwitchProblem(model({ fits: false }))).toMatch(/OOM/);
+  });
+});
 
 describe("appendDelta", () => {
   // The bubble is created by the first delta, so a request that dies before

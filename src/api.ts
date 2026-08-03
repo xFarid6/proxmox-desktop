@@ -46,6 +46,19 @@ export interface LlmEndpoint {
   manual: boolean;
 }
 
+/** A model file on the guest's disk (#100). `llama-server` serves one model per
+ * process, so the inventory has to come from the disk rather than the API —
+ * `/v1/models` only ever reports the one that is loaded. */
+export interface ModelFile {
+  /** Bare filename, which is what gets written into the guest's `MODEL=`. */
+  file: string;
+  path: string;
+  bytes: number;
+  loaded: boolean;
+  /** False when the file is too large for the guest's RAM to serve it. */
+  fits: boolean;
+}
+
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
   content: string;
@@ -581,6 +594,21 @@ export const api = {
     onChunk: Channel<ChatChunk>,
   ) => call<void>("llm_chat", { baseUrl, model, messages, requestId, onChunk }),
   llmCancel: (requestId: string) => call<void>("llm_cancel", { requestId }),
+  /** Model files on the guest's disk (#100). `null` means none were found in
+   * any directory this knows to look in. Pass `baseUrl` to have the running
+   * model marked. */
+  llmModelsAvailable: (
+    connectionId: string,
+    kind: GuestKind,
+    vmid: number,
+    baseUrl: string | null,
+  ) => call<ModelFile[] | null>("llm_models_available", { connectionId, kind, vmid, baseUrl }),
+  /** Point the guest at a different model and restart it. Returns once the
+   * restart is *issued* — the endpoint is then down for about a minute while
+   * the model loads, which is expected. Poll `llmHealth` to see it come back. */
+  llmSwitchModel: (connectionId: string, kind: GuestKind, vmid: number, file: string) =>
+    call<void>("llm_switch_model", { connectionId, kind, vmid, file }),
+  llmHealth: (baseUrl: string) => call<boolean>("llm_health", { baseUrl }),
   guestConfig: (connectionId: string, node: string, kind: GuestKind, vmid: number) =>
     call<Record<string, unknown>>("guest_config", { connectionId, node, kind, vmid }),
   setGuestConfig: (

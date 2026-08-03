@@ -1,4 +1,4 @@
-import type { ChatMessage, LlmEndpoint } from "./api";
+import type { ChatMessage, LlmEndpoint, ModelFile } from "./api";
 import { api } from "./api";
 import type { GuestKind } from "./api";
 
@@ -27,6 +27,26 @@ export function appendDelta(messages: ChatMessage[], delta: string): ChatMessage
  */
 export function isUsable(endpoint: LlmEndpoint | null): boolean {
   return !!endpoint && endpoint.models.length > 0;
+}
+
+/** How long a model reload is allowed to take before the panel stops waiting.
+ *
+ * A 10 GiB model takes about a minute to load on the CPU box this was built
+ * for, so the cap is generous — giving up early would report a failure while
+ * the guest is still doing exactly what it was asked. */
+export const RELOAD_TIMEOUT_MS = 300_000;
+export const RELOAD_POLL_MS = 3_000;
+
+/** Why this model cannot be switched to, or `null` if it can.
+ *
+ * Refusing an oversized model up front is the point: a model that does not fit
+ * does not fail cleanly on the guest, it OOM-loops, and the endpoint that was
+ * working before the switch never comes back.
+ */
+export function modelSwitchProblem(m: ModelFile): string | null {
+  if (m.loaded) return "Already loaded.";
+  if (!m.fits) return "Too large for this guest's RAM — it would OOM-loop instead of loading.";
+  return null;
 }
 
 /** Cached probe results, keyed per guest.

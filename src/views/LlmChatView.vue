@@ -2,8 +2,24 @@
 import { computed, nextTick, onMounted, ref, useTemplateRef } from "vue";
 import { useRoute } from "vue-router";
 import { Channel } from "@tauri-apps/api/core";
-import { api, type ChatChunk, type ChatMessage, type GuestKind, type LlmEndpoint } from "../api";
-import { appendDelta, forgetProbe, isUsable, probeLlm } from "../llm";
+import {
+  api,
+  type ChatChunk,
+  type ChatMessage,
+  type GuestKind,
+  type LlmEndpoint,
+  type ModelFile,
+} from "../api";
+import { formatBytes } from "../format";
+import {
+  RELOAD_POLL_MS,
+  RELOAD_TIMEOUT_MS,
+  appendDelta,
+  forgetProbe,
+  isUsable,
+  modelSwitchProblem,
+  probeLlm,
+} from "../llm";
 import { activeId } from "../stores/connections";
 import { toast } from "../stores/toast";
 
@@ -29,7 +45,16 @@ let requestId = "";
 // may have restarted, so the next send re-probes before trying to use it.
 const stale = ref(false);
 
-const canSend = computed(() => !!draft.value.trim() && !streaming.value && isUsable(endpoint.value));
+// Model switching (#100). `switching` names the file being loaded; while it is
+// set the endpoint is expected to be down, which is a progress state and not
+// an error.
+const models = ref<ModelFile[] | null>(null);
+const switching = ref("");
+const reloadSeconds = ref(0);
+
+const canSend = computed(
+  () => !!draft.value.trim() && !streaming.value && !switching.value && isUsable(endpoint.value),
+);
 
 async function scrollToBottom() {
   await nextTick();
@@ -63,6 +88,72 @@ async function probe(force = false) {
   } finally {
     probing.value = false;
   }
+  await loadModels();
+}
+
+/** The model files on the guest's disk. Absence is not an error: a guest we
+ * cannot exec into, or one that keeps its models somewhere unusual, simply
+ * gets no switcher. */
+async function loadModels() {
+  if (!activeId.value) return;
+  try {
+    models.value = await api.llmModelsAvailable(
+      activeId.value,
+      kind,
+      vmid,
+      endpoint.value?.baseUrl ?? null,
+    );
+  } catch {
+    models.value = null;
+  }
+}
+
+/** Switch the served model and wait for the endpoint to come back.
+ *
+ * The reload takes about a minute for a 10 GiB model, during which the endpoint
+ * is **down** — expected, not an error. The chat stays disabled and the elapsed
+ * time is on screen so the wait is visibly progress rather than a hang. */
+async function switchTo(m: ModelFile) {
+  if (!activeId.value || modelSwitchProblem(m) || switching.value) return;
+  const base = endpoint.value?.baseUrl;
+  switching.value = m.file;
+  reloadSeconds.value = 0;
+  error.value = "";
+  try {
+    await api.llmSwitchModel(activeId.value, kind, vmid, m.file);
+  } catch (e) {
+    error.value = String(e);
+    switching.value = "";
+    return;
+  }
+
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  const deadline = Date.now() + RELOAD_TIMEOUT_MS;
+  let healthy = false;
+  while (Date.now() < deadline) {
+    await sleep(RELOAD_POLL_MS);
+    reloadSeconds.value = Math.round((RELOAD_TIMEOUT_MS - (deadline - Date.now())) / 1000);
+    // The address does not change across a restart, so the old base is still
+    // the right thing to poll -- a re-probe here would race the container
+    // being recreated and could cache a miss.
+    if (base && (await api.llmHealth(base).catch(() => false))) {
+      healthy = true;
+      break;
+    }
+  }
+  switching.value = "";
+  if (!healthy) {
+    error.value =
+      `${m.file} did not start serving within ${RELOAD_TIMEOUT_MS / 1000}s. The previous model ` +
+      `may not have come back either — check the container on the guest, then Re-probe.`;
+    stale.value = true;
+    return;
+  }
+  // The alias changes with the model, so the picker has to be rebuilt from a
+  // fresh probe rather than kept.
+  if (activeId.value) forgetProbe(activeId.value, kind, vmid);
+  await probe(true);
+  toast(`Now serving ${m.file}`);
 }
 
 /** Pin the endpoint the user typed, or clear the pin when the box is empty.
@@ -232,8 +323,61 @@ onMounted(() => probe());
             class="hint"
           >
             This server exposes one model — <code>llama-server</code> loads exactly
-            one per process. Switching it is issue #100.
+            one per process, so switching means restarting it below.
           </p>
+        </section>
+
+        <section
+          v-if="models"
+          class="card"
+        >
+          <h2>Models on this guest</h2>
+          <!-- The reload window is the whole design problem here: the endpoint
+               is down for it, and that is the guest doing what it was asked. -->
+          <p
+            v-if="switching"
+            class="hint"
+          >
+            Loading <code>{{ switching }}</code> — the endpoint is down while it
+            reads the file, usually about a minute. {{ reloadSeconds }}s elapsed.
+          </p>
+          <table v-cards>
+            <thead>
+              <tr>
+                <th>File</th>
+                <th>Size</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="m in models"
+                :key="m.path"
+              >
+                <td>
+                  {{ m.file }}
+                  <span
+                    v-if="m.loaded"
+                    class="badge"
+                  >loaded</span>
+                </td>
+                <td>{{ formatBytes(m.bytes) }}</td>
+                <td>
+                  <button
+                    :disabled="!!modelSwitchProblem(m) || !!switching || streaming"
+                    :title="modelSwitchProblem(m) ?? ''"
+                    @click="switchTo(m)"
+                  >
+                    {{ switching === m.file ? "Loading…" : "Use" }}
+                  </button>
+                  <span
+                    v-if="!m.fits"
+                    class="hint"
+                  >won't fit in RAM</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </section>
 
         <section

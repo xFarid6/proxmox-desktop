@@ -107,6 +107,9 @@ pub fn run() {
             llm::llm_set_endpoint,
             llm::llm_chat,
             llm::llm_cancel,
+            llm::llm_models_available,
+            llm::llm_switch_model,
+            llm::llm_health,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
