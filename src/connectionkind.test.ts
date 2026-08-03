@@ -60,6 +60,11 @@ describe("navFor", () => {
     expect(routes).toContain("/host/docker");
   });
 
+  it("gives an SSH host its stream tab", () => {
+    const routes = navFor(sshConn, { cephAvailable: true }).map((i) => i.to);
+    expect(routes).toContain("/host/stream");
+  });
+
   it("does not offer the SSH-host terminal tab to a PVE connection", () => {
     // A PVE node's shell is reached per-node from the dashboard, not from a
     // connection-wide tab — /host/* belongs to SSH hosts only.
@@ -111,7 +116,13 @@ describe("routeAllowedFor", () => {
   it("lets an SSH host reach Connections and its own /host tabs", () => {
     // /host/* is where #103-#106 hang the terminal, ports, docker and stream
     // tabs — they must not need this guard revisited when they land.
-    for (const path of ["/connections", "/host/terminal", "/host/services", "/host/docker"]) {
+    for (const path of [
+      "/connections",
+      "/host/terminal",
+      "/host/services",
+      "/host/docker",
+      "/host/stream",
+    ]) {
       expect(routeAllowedFor(sshConn, path)).toBe(true);
     }
   });

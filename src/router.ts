@@ -17,6 +17,7 @@ const routes = [
   { path: "/host/terminal", component: () => import("./views/SshShellView.vue") },
   { path: "/host/services", component: () => import("./views/HostServicesView.vue") },
   { path: "/host/docker", component: () => import("./views/HostDockerView.vue") },
+  { path: "/host/stream", component: () => import("./views/HostStreamView.vue") },
   { path: "/tasks", component: () => import("./views/TasksView.vue") },
   { path: "/network", component: () => import("./views/NetworkView.vue") },
   { path: "/backups", component: () => import("./views/BackupsView.vue") },

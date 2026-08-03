@@ -1,6 +1,25 @@
 import { describe, expect, it } from "vitest";
-import type { DockerContainer, ListeningPort, ServiceUnit } from "./api";
-import { isDetached, isFailed, sortContainers, sortPorts, sortUnits } from "./hostservices";
+import type { DockerContainer, ListeningPort, ServiceUnit, StreamEndpoint } from "./api";
+import {
+  isDetached,
+  isFailed,
+  sortContainers,
+  sortPorts,
+  sortStreams,
+  sortUnits,
+  streamUrl,
+} from "./hostservices";
+
+function endpoint(e: Partial<StreamEndpoint>): StreamEndpoint {
+  return {
+    port: 8082,
+    path: "/?action=stream",
+    contentType: "multipart/x-mixed-replace;boundary=boundarydonotcross",
+    kind: "stream",
+    process: "docker-proxy",
+    ...e,
+  };
+}
 
 function port(p: Partial<ListeningPort>): ListeningPort {
   return { proto: "tcp", address: "0.0.0.0", port: 22, process: null, pid: null, ...p };
@@ -113,5 +132,43 @@ describe("isDetached", () => {
     expect(isDetached(container({}))).toBe(false);
     // A stopped container has no attachment by definition — not a fault.
     expect(isDetached(container({ state: "exited", networks: "" }))).toBe(false);
+  });
+});
+
+describe("streamUrl", () => {
+  it("builds the URL wyse-server's webcam is actually reached at", () => {
+    expect(streamUrl("100.77.208.85", endpoint({}))).toBe(
+      "http://100.77.208.85:8082/?action=stream&_pxx=0",
+    );
+  });
+
+  it("brackets a bare IPv6 host", () => {
+    expect(streamUrl("fd7a:115c:a1e0::3b34:d055", endpoint({}), 1)).toBe(
+      "http://[fd7a:115c:a1e0::3b34:d055]:8082/?action=stream&_pxx=1",
+    );
+    // Already bracketed: left alone rather than doubled.
+    expect(streamUrl("[::1]", endpoint({ port: 80, path: "/" }))).toBe("http://[::1]:80/?_pxx=0");
+  });
+
+  it("changes with the nonce so a retry cannot be served from cache", () => {
+    const ep = endpoint({});
+    expect(streamUrl("host", ep, 1)).not.toBe(streamUrl("host", ep, 2));
+  });
+
+  it("keeps the probed path's own query intact", () => {
+    // The path came back from a probe that proved it answers; rewriting it
+    // would point the viewer somewhere nothing was verified.
+    expect(streamUrl("host", endpoint({}))).toContain("/?action=stream&");
+  });
+});
+
+describe("sortStreams", () => {
+  it("puts a live stream above a still, then orders by port", () => {
+    const sorted = sortStreams([
+      endpoint({ port: 9000, kind: "snapshot" }),
+      endpoint({ port: 8083 }),
+      endpoint({ port: 8082 }),
+    ]);
+    expect(sorted.map((e) => e.port)).toEqual([8082, 8083, 9000]);
   });
 });
