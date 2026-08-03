@@ -64,12 +64,35 @@ merged with their commands verified over raw SSH and their views never opened,
 and two of the three failed *silently*. Hence `tools/cdp.mjs`: a GUI pass is part
 of shipping now, not a nice-to-have.
 
-**Open as of 2026-08-03: #99, #100, #101 (the LLM panel) and #114 (two cosmetic
-defects in #102's connection form).**
+**The LLM panel is done too, and the board is empty.** #99 discovery + chat,
+#100 model switching and #101 context controls all shipped 2026-08-03, along with
+#114. **There are no open issues.** Check `gh issue list --state open` before
+planning anything off this file.
 
-*LLM panel* — #99 chat panel for a guest serving an OpenAI-compatible endpoint,
-then #100 switch the served model, #101 context controls (clear / budget /
-compact). The differentiator is *discovery*, not the chat UI.
+What that work left behind, in `src-tauri/src/llm.rs` + `src/llm.ts` +
+`LlmChatView.vue`, all verified against `lab`'s CT 100:
+
+- **Discovery** races an ordered candidate list — manual override, last known
+  good, guest IP, guest tailnet address, node — and caches the winner in
+  `llm_endpoints.json` (a URL is not a secret, so not the keyring; it is
+  per-guest, so not `ConnectionInfo`).
+- **The node candidate is only tried on ports the guest itself is listening on.**
+  A node address is not guest-specific — `192.168.1.13:8080` answers the same for
+  every guest on that node — so probing it blindly gave *every* guest on `lab` an
+  LLM tab pointing at CT 100. Found by the first live run, not by CI.
+- **Chat** streams over `tauri::ipc::Channel`, cancelled by a flag checked
+  between chunks. HTTP stays in Rust: llama.cpp echoes any `Origin`, but ollama
+  does not, and a Rust client has no CORS to satisfy.
+- **Switching a model** is a `.env` edit plus `docker compose up -d` in
+  `/opt/llm` on the guest, guarded by a RAM check. Not `llm-use` — that script
+  does not exist anywhere, despite what #100 and the guest's own `.env` comment
+  say.
+- **Context** is client-side, so Clear erases the server's slots as well as the
+  message list, the budget uses `/tokenize` once a turn, and Compact is a pure
+  transform that never drops the system message.
+
+*Original framing, kept because it explains the shape of the code.* The
+differentiator was *discovery*, not the chat UI.
 
 Driving case, **topology confirmed live 2026-08-03**: `lab`'s CT 100 runs
 llama.cpp on `0.0.0.0:8080` serving `qwen3-30b-a3b`, on the port-less NAT bridge
@@ -87,7 +110,8 @@ LAN address, and must not assume the node's tailnet address inherits the node's
 DNAT rules. Note `tailscale status` lied about this box being offline for 12h —
 when it disagrees with a direct ping, believe the ping.
 
-**Two corrections to the issues' own text:**
+**Two corrections to the issues' own text**, both confirmed while implementing
+them:
 
 - **#99 says its endpoint resolution is shared with #65 and should be lifted.**
   Half wrong. #65 is the wrong donor — it reaches guests over SSH-to-the-node plus
@@ -96,14 +120,21 @@ when it disagrees with a direct ping, believe the ping.
   `scan.rs::scan_tailscale` already enumerates tailnet peers, and the guest is its
   own peer (`llm`, `100.111.194.35`) — which is the candidate that actually works.
 - **#100 is not an API call.** `llama-server` serves one model per process
-  (`--model .../Qwen3-30B-A3B-Instruct-2507-UD-IQ2_M.gguf`, four `.gguf` files on
-  disk). Switching means editing `/opt/llm/docker-compose.yml` and restarting,
-  which rides the `pct exec` transport #65 already has. There is no load-a-model
-  endpoint to call.
+  (four `.gguf` files sit in `/opt/models`). Switching means rewriting `MODEL=`
+  and `ALIAS=` in `/opt/llm/.env` and running `docker compose up -d`, over the
+  `pct exec` transport #65 already has. There is no load-a-model endpoint. The
+  issue's `llm-use` script does **not** exist — not in the guest, not on the
+  node — though `.env` still carries a comment recommending it.
 
 `--slots`, `--metrics` and `--tokenize` are all enabled on the real box, so #101
-can use real token counts rather than a chars/4 estimate — but must still degrade
-when they are off, which is llama.cpp's default.
+uses real token counts rather than a chars/4 estimate — but still degrades when
+they are off, which is llama.cpp's default. `/props` advertises both flags, which
+is how the panel knows.
+
+One more trap that cost time: `/props`'s `model_path` is the path **inside the
+container** (`/models/...`, bind-mounted from `/opt/models`), so it cannot be
+listed over the guest channel. Only its filename is comparable with what the
+guest's directories hold.
 
 Historical note kept because it still shapes the code: the v3 plan wanted #24
 before #18/#19 so those views would be born multi-cluster-aware. It went the other
