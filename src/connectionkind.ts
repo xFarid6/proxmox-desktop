@@ -1,4 +1,4 @@
-import type { ConnectionInfo } from "./api";
+import type { ConnectionInfo, ConnectionKind } from "./api";
 
 export interface NavItem {
   to: string;
@@ -11,6 +11,19 @@ export interface NavItem {
  * before any connection exists. */
 export function isSshHost(c: ConnectionInfo | undefined | null): boolean {
   return c?.kind === "ssh";
+}
+
+/** Whether the connection form is collecting SSH credentials.
+ *
+ * SSH is optional for a PVE connection and mandatory for an SSH host, which has
+ * no other way in. #102 enforced that by *writing* `true` into the checkbox when
+ * the type changed, and never put the old value back — so switching to SSH host
+ * and back left a PVE connection with the SSH shell silently enabled (#114).
+ *
+ * Derive it instead. The checkbox then only ever holds what the user chose, and
+ * switching type back cannot lose it. */
+export function sshEnabledFor(kind: ConnectionKind, checkbox: boolean): boolean {
+  return kind === "ssh" || checkbox;
 }
 
 /** The sidebar/tab-bar nav for the active connection.

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ConnectionInfo } from "./api";
-import { isSshHost, navFor, routeAllowedFor } from "./connectionkind";
+import { isSshHost, navFor, routeAllowedFor, sshEnabledFor } from "./connectionkind";
 
 const pveConn: ConnectionInfo = {
   id: "1",
@@ -125,6 +125,28 @@ describe("routeAllowedFor", () => {
     ]) {
       expect(routeAllowedFor(sshConn, path)).toBe(true);
     }
+  });
+});
+
+describe("sshEnabledFor", () => {
+  it("is on for an SSH host whatever the checkbox says", () => {
+    expect(sshEnabledFor("ssh", false)).toBe(true);
+    expect(sshEnabledFor("ssh", true)).toBe(true);
+  });
+
+  it("follows the checkbox for a PVE connection", () => {
+    expect(sshEnabledFor("pve", false)).toBe(false);
+    expect(sshEnabledFor("pve", true)).toBe(true);
+  });
+
+  // #114: the old code wrote `true` into the checkbox on switching to SSH host
+  // and never restored it, so coming back gave a PVE connection an SSH shell
+  // the user never asked for. Deriving means the checkbox is untouched, so the
+  // round trip has to end where it started.
+  it("survives a pve -> ssh -> pve round trip with the checkbox off", () => {
+    const checkbox = false;
+    expect(sshEnabledFor("ssh", checkbox)).toBe(true);
+    expect(sshEnabledFor("pve", checkbox)).toBe(false);
   });
 });
 

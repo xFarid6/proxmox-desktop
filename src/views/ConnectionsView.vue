@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref, watch } from "vue";
+import { computed, onMounted, reactive, ref } from "vue";
 import {
   api,
   type ConnectionInfo,
@@ -7,6 +7,7 @@ import {
   type DiscoveredHost,
   type TailscalePeer,
 } from "../api";
+import { sshEnabledFor } from "../connectionkind";
 import { activeId, connections, refreshConnections, setActive } from "../stores/connections";
 import { toast } from "../stores/toast";
 import { joinToken, tokenProblem } from "../token";
@@ -38,13 +39,10 @@ const blank = () => ({
 const form = reactive(blank());
 
 // An SSH host has no PVE API — SSH is its only way in, so the checkbox that
-// makes SSH optional for a PVE connection doesn't apply to it (#102).
-watch(
-  () => form.kind,
-  (kind) => {
-    if (kind === "ssh") form.sshEnabled = true;
-  },
-);
+// makes SSH optional for a PVE connection doesn't apply to it (#102). Derived,
+// never written back into the checkbox: #114 was that writing it lost the
+// user's own choice when they switched the type back.
+const sshEnabled = computed(() => sshEnabledFor(form.kind, form.sshEnabled));
 
 function startAdd() {
   Object.assign(form, blank());
@@ -62,7 +60,7 @@ function startEdit(c: ConnectionInfo) {
     acceptInvalidCerts: c.acceptInvalidCerts,
     tokenId: "",
     tokenSecret: "",
-    sshEnabled: c.kind === "ssh" ? true : !!c.ssh,
+    sshEnabled: !!c.ssh,
     sshUser: c.ssh?.user ?? "",
     sshPort: c.ssh?.port ?? 22,
     sshAuth: c.ssh?.useAgent ? "agent" : c.ssh?.keyPath ? "key" : "password",
@@ -119,7 +117,7 @@ async function save() {
       host: form.host,
       kind: form.kind,
       acceptInvalidCerts: form.kind === "ssh" ? false : form.acceptInvalidCerts,
-      ssh: form.sshEnabled
+      ssh: sshEnabled.value
         ? {
             user: form.sshUser,
             port: form.sshPort,
@@ -128,7 +126,7 @@ async function save() {
           }
         : null,
     };
-    const sshSecret = form.sshEnabled && form.sshAuth !== "agent" ? form.sshSecret : undefined;
+    const sshSecret = sshEnabled.value && form.sshAuth !== "agent" ? form.sshSecret : undefined;
     await api.saveConnection(
       info,
       form.kind === "ssh" ? undefined : joinToken(form.tokenId, form.tokenSecret) || undefined,
@@ -200,7 +198,6 @@ function useDiscoveredHostAsSsh(ip: string) {
   Object.assign(form, blank());
   form.kind = "ssh";
   form.host = ip;
-  form.sshEnabled = true;
   testResult.value = "";
   error.value = "";
   editing.value = true;
@@ -422,9 +419,10 @@ onMounted(refreshConnections);
         </label>
       </template>
 
-      <!-- SSH is optional for a PVE connection but mandatory for an SSH host
-           (forced on in the form.kind watcher), so the checkbox that makes it
-           optional only makes sense for a PVE connection. -->
+      <!-- SSH is optional for a PVE connection but mandatory for an SSH host, so
+           the checkbox that makes it optional only makes sense for a PVE
+           connection. It keeps holding the user's own choice while it is hidden
+           (#114) — `sshEnabled` is what the rest of the form reads. -->
       <label
         v-if="form.kind === 'pve'"
         class="check"
@@ -436,13 +434,13 @@ onMounted(refreshConnections);
         Enable SSH shell for this connection
       </label>
 
-      <template v-if="form.sshEnabled">
+      <template v-if="sshEnabled">
         <label>
           SSH user
           <input
             v-model="form.sshUser"
             placeholder="root"
-            :required="form.sshEnabled"
+            required
           >
         </label>
         <label>
@@ -590,20 +588,17 @@ onMounted(refreshConnections);
   gap: 16px;
 }
 
-.radio {
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 6px;
-}
-
 .form label {
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
 
-.form .check {
+/* These two sit beside their input rather than above it. Both selectors have to
+   outspecify `.form label` (0,1,1) or the column direction wins on order — a
+   bare `.radio` (0,1,0) is what left the type radios stacked in #114. */
+.form .check,
+.form .radio {
   flex-direction: row;
   align-items: center;
   gap: 8px;
